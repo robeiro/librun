@@ -31,9 +31,16 @@ def init_db():
         rest_hr INTEGER DEFAULT 55,
         target_distance TEXT DEFAULT '10k',
         target_time_minutes REAL DEFAULT 50.0,
+        gemini_api_key TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    # Check if gemini_api_key column exists (migration for existing db)
+    cursor.execute("PRAGMA table_info(athlete_settings)")
+    settings_cols = [col[1] for col in cursor.fetchall()]
+    if "gemini_api_key" not in settings_cols:
+        cursor.execute("ALTER TABLE athlete_settings ADD COLUMN gemini_api_key TEXT")
 
     # Default settings row if not present
     cursor.execute("""
@@ -69,9 +76,22 @@ def init_db():
     )
     """)
 
+    # AI Analyses Table (cache analyses to save quota and speed up access)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ai_analyses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        analysis_type TEXT NOT NULL, -- 'coach_global', 'activity'
+        target_id TEXT, -- strava_id or null
+        content TEXT NOT NULL,
+        model_used TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # Indices for speed
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_start_date ON activities (start_date DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_type ON activities (type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analyses_type_target ON ai_analyses (analysis_type, target_id)")
 
     conn.commit()
     conn.close()
@@ -84,7 +104,8 @@ def save_athlete_settings(settings: Dict[str, Any]):
     for k, v in settings.items():
         if k in ["strava_client_id", "strava_client_secret", "strava_access_token",
                  "strava_refresh_token", "strava_token_expires_at", "athlete_id",
-                 "athlete_name", "max_hr", "rest_hr", "target_distance", "target_time_minutes"]:
+                 "athlete_name", "max_hr", "rest_hr", "target_distance", "target_time_minutes",
+                 "gemini_api_key"]:
             fields.append(f"{k} = ?")
             values.append(v)
     
@@ -110,6 +131,37 @@ def get_athlete_settings() -> Dict[str, Any]:
         "target_distance": "10k",
         "target_time_minutes": 50.0
     }
+
+def save_ai_analysis(analysis_type: str, content: str, target_id: Optional[str] = None, model_used: Optional[str] = None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO ai_analyses (analysis_type, target_id, content, model_used)
+    VALUES (?, ?, ?, ?)
+    """, (analysis_type, target_id, content, model_used))
+    conn.commit()
+    conn.close()
+
+def get_latest_ai_analysis(analysis_type: str, target_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    if target_id:
+        cursor.execute("""
+        SELECT * FROM ai_analyses 
+        WHERE analysis_type = ? AND target_id = ?
+        ORDER BY created_at DESC LIMIT 1
+        """, (analysis_type, target_id))
+    else:
+        cursor.execute("""
+        SELECT * FROM ai_analyses 
+        WHERE analysis_type = ?
+        ORDER BY created_at DESC LIMIT 1
+        """, (analysis_type,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return None
 
 def upsert_activity(act: Dict[str, Any]) -> bool:
     """Inserts or updates an activity. Returns True if inserted, False if updated."""

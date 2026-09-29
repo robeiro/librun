@@ -130,4 +130,15 @@ export interface AthleteSettings {
   strava_client_secret?: string;
   strava_client_secret_configured?: boolean;
   has_strava_token?: boolean;
+  gemini_api_key?: string;
+  gemini_api_key_configured?: boolean;
+  gemini_api_key_masked?: string;
+}
+
+export interface AiAnalysisResponse {
+  success: boolean;
+  analysis?: string;
+  created_at?: string;
+  cached?: boolean;
+  error?: string;
 }

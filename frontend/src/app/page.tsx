@@ -16,6 +16,8 @@ import { ActivitiesTable } from "../components/ActivitiesTable";
 import { ActivityDuel } from "../components/ActivityDuel";
 import { StravaConnectModal } from "../components/StravaConnectModal";
 import { SettingsModal } from "../components/SettingsModal";
+import { GeminiCoach } from "../components/GeminiCoach";
+import { ActivityAiModal } from "../components/ActivityAiModal";
 import { 
   Sparkles, 
   UploadCloud, 
@@ -25,7 +27,8 @@ import {
   Calendar, 
   ShieldAlert, 
   CheckCircle2,
-  Swords
+  Swords,
+  BrainCircuit
 } from "lucide-react";
 
 export default function Home() {
@@ -41,6 +44,15 @@ export default function Home() {
   // Selected activities for the virtual duel
   const [duelActivityA, setDuelActivityA] = useState<Activity | null>(null);
   const [duelActivityB, setDuelActivityB] = useState<Activity | null>(null);
+
+  // Single activity AI modal
+  const [selectedActivityForAi, setSelectedActivityForAi] = useState<Activity | null>(null);
+  const [isActivityAiModalOpen, setIsActivityAiModalOpen] = useState<boolean>(false);
+
+  const handleAnalyzeActivityWithAi = (act: Activity) => {
+    setSelectedActivityForAi(act);
+    setIsActivityAiModalOpen(true);
+  };
 
   const handleCompareActivity = (act: Activity) => {
     setDuelActivityA(act);
@@ -275,8 +287,8 @@ export default function Home() {
                       : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
                   }`}
                 >
-                  <Target className="w-4 h-4" />
-                  <span>Onde Melhorar (Coach IA)</span>
+                  <BrainCircuit className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Coach IA (Gemini)</span>
                   <span className="w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
                 </button>
 
@@ -358,6 +370,7 @@ export default function Home() {
                 <ActivitiesTable 
                   activities={activities} 
                   onCompare={handleCompareActivity}
+                  onAnalyzeAi={handleAnalyzeActivityWithAi}
                 />
               </div>
             )}
@@ -365,11 +378,18 @@ export default function Home() {
             {/* TAB: COACH RECOMMENDATIONS */}
             {activeTab === "coach" && (
               <div className="space-y-6">
+                {/* 1. Google Gemini Deep AI Diagnosis */}
+                <GeminiCoach 
+                  athlete={athlete} 
+                  onOpenSettings={() => setIsSettingsModalOpen(true)} 
+                />
+
+                {/* 2. Physiological Rule-based Insights */}
                 {analytics?.coaching_insights && (
                   <CoachingInsights insights={analytics.coaching_insights} />
                 )}
 
-                {/* Training load explanation */}
+                {/* 3. Training load explanation */}
                 {analytics?.acwr && (
                   <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-3 text-xs text-slate-700 dark:text-slate-300 shadow-sm">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center space-x-2">
@@ -437,6 +457,7 @@ export default function Home() {
                 <ActivitiesTable 
                   activities={activities} 
                   onCompare={handleCompareActivity}
+                  onAnalyzeAi={handleAnalyzeActivityWithAi}
                 />
               </div>
             )}
@@ -459,6 +480,15 @@ export default function Home() {
         athlete={athlete}
         onSave={handleSaveSettings}
         onClearData={handleClearData}
+      />
+
+      {/* Activity AI Analysis Modal */}
+      <ActivityAiModal
+        activity={selectedActivityForAi}
+        athlete={athlete}
+        isOpen={isActivityAiModalOpen}
+        onClose={() => setIsActivityAiModalOpen(false)}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
     </div>
   );

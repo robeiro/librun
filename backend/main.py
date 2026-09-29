@@ -21,10 +21,16 @@ from strava_auth import (
     exchange_strava_code,
     sync_strava_activities
 )
+from gemini_service import (
+    get_gemini_key,
+    validate_gemini_key,
+    generate_global_coaching_analysis,
+    generate_single_activity_analysis,
+)
 
 app = FastAPI(
     title="librun API",
-    description="Motor de análise estatística de corrida e treinamento integrado ao Strava",
+    description="Motor de análise estatística de corrida e treinamento integrado ao Strava e Google Gemini IA",
     version="1.0.0"
 )
 
@@ -53,17 +59,35 @@ class AthleteSettingsUpdate(BaseModel):
     target_time_minutes: Optional[float] = None
     strava_client_id: Optional[str] = None
     strava_client_secret: Optional[str] = None
+    gemini_api_key: Optional[str] = None
 
 @app.get("/api/settings")
 def get_settings():
     settings = get_athlete_settings()
-    # Mask sensitive Strava secret
     masked = dict(settings)
+    # Mask Strava secret
     if masked.get("strava_client_secret"):
         masked["strava_client_secret_configured"] = True
         masked["strava_client_secret"] = "••••••••"
     else:
         masked["strava_client_secret_configured"] = False
+
+    # Mask Gemini API key
+    if masked.get("gemini_api_key"):
+        raw_key = masked["gemini_api_key"].strip()
+        masked["gemini_api_key_configured"] = True
+        masked["gemini_api_key_masked"] = (raw_key[:6] + "..." + raw_key[-4:]) if len(raw_key) > 10 else "••••••••"
+        masked["gemini_api_key"] = "••••••••"
+    else:
+        env_key = os.environ.get("GEMINI_API_KEY")
+        if env_key:
+            masked["gemini_api_key_configured"] = True
+            masked["gemini_api_key_masked"] = "Variável de Ambiente (GEMINI_API_KEY)"
+            masked["gemini_api_key"] = "••••••••"
+        else:
+            masked["gemini_api_key_configured"] = False
+            masked["gemini_api_key_masked"] = None
+
     masked["has_strava_token"] = bool(masked.get("strava_access_token"))
     return masked
 
@@ -71,7 +95,7 @@ def get_settings():
 def update_settings(payload: AthleteSettingsUpdate):
     data = {k: v for k, v in payload.dict().items() if v is not None}
     save_athlete_settings(data)
-    return {"success": True, "settings": get_athlete_settings()}
+    return {"success": True, "settings": get_settings()}
 
 @app.get("/api/activities")
 def list_activities(
@@ -209,6 +233,87 @@ async def sync_activities(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao sincronizar com o Strava: {str(e)}")
+
+# ==========================================
+# GEMINI AI ENDPOINTS
+# ==========================================
+
+class GeminiValidateRequest(BaseModel):
+    api_key: Optional[str] = None
+
+@app.post("/api/gemini/validate")
+async def validate_gemini_key_endpoint(payload: Optional[GeminiValidateRequest] = None):
+    """Tests if a Gemini API key is valid."""
+    key = None
+    if payload and payload.api_key and payload.api_key.strip():
+        key = payload.api_key.strip()
+    if not key:
+        key = get_gemini_key()
+    if not key:
+        return {"valid": False, "error": "Nenhuma chave Gemini fornecida ou configurada."}
+
+    result = await validate_gemini_key(key)
+    return result
+
+@app.get("/api/ai/coach")
+async def get_ai_coaching_analysis(force_refresh: bool = Query(default=False)):
+    """Returns AI Coach Diagnosis (cached or freshly generated)."""
+    activities = get_activities(limit=None, act_type=None)
+    if not activities:
+        raise HTTPException(
+            status_code=400, 
+            detail="Nenhuma atividade cadastrada. Sincronize com o Strava ou carregue a base de exemplo."
+        )
+
+    settings = get_athlete_settings()
+    analytics_result = compute_full_analytics(activities, settings)
+
+    res = await generate_global_coaching_analysis(
+        activities=activities,
+        settings=settings,
+        analytics=analytics_result,
+        force_refresh=force_refresh
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Erro ao gerar diagnóstico IA."))
+    return res
+
+@app.post("/api/ai/coach/refresh")
+async def refresh_ai_coaching_analysis():
+    """Forces generation of a brand new AI Coach Diagnosis."""
+    activities = get_activities(limit=None, act_type=None)
+    if not activities:
+        raise HTTPException(
+            status_code=400, 
+            detail="Nenhuma atividade cadastrada. Sincronize com o Strava ou carregue a base de exemplo."
+        )
+
+    settings = get_athlete_settings()
+    analytics_result = compute_full_analytics(activities, settings)
+
+    res = await generate_global_coaching_analysis(
+        activities=activities,
+        settings=settings,
+        analytics=analytics_result,
+        force_refresh=True
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Erro ao gerar diagnóstico IA."))
+    return res
+
+@app.get("/api/ai/activity/{strava_id}")
+async def get_single_activity_ai_analysis(strava_id: str, force_refresh: bool = Query(default=False)):
+    """Returns AI debrief for a specific running session."""
+    activities = get_activities(limit=None, act_type=None)
+    act = next((a for a in activities if str(a.get("strava_id") or a.get("id")) == str(strava_id)), None)
+    if not act:
+        raise HTTPException(status_code=404, detail="Atividade não encontrada.")
+
+    settings = get_athlete_settings()
+    res = await generate_single_activity_analysis(activity=act, settings=settings)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Erro ao analisar atividade."))
+    return res
 
 if __name__ == "__main__":
     import uvicorn

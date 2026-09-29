@@ -2,14 +2,15 @@
 
 import React, { useState } from "react";
 import { Activity } from "../types";
-import { Search, Heart, Footprints, Swords } from "lucide-react";
+import { Search, Heart, Footprints, Swords, BrainCircuit } from "lucide-react";
 
 interface ActivitiesTableProps {
   activities: Activity[];
   onCompare?: (activity: Activity) => void;
+  onAnalyzeAi?: (activity: Activity) => void;
 }
 
-export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, onCompare }) => {
+export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, onCompare, onAnalyzeAi }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [visibleCount, setVisibleCount] = useState<number>(50);
 
@@ -144,16 +145,28 @@ export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, on
                     </span>
                   </td>
                   <td className="py-3 px-3 whitespace-nowrap text-right">
-                    {onCompare && (
-                      <button
-                        onClick={() => onCompare(act)}
-                        title="Abrir no Duelo Virtual contra outra corrida"
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-500 hover:text-slate-950 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500 dark:hover:text-slate-950 border border-emerald-200 dark:border-emerald-500/20 transition shadow-xs"
-                      >
-                        <Swords className="w-3 h-3" />
-                        <span>Duelo</span>
-                      </button>
-                    )}
+                    <div className="flex items-center justify-end space-x-1.5">
+                      {onAnalyzeAi && (
+                        <button
+                          onClick={() => onAnalyzeAi(act)}
+                          title="Analisar esta corrida com a IA do Google Gemini"
+                          className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-teal-50 text-teal-700 hover:bg-teal-500 hover:text-slate-950 dark:bg-teal-500/10 dark:text-teal-400 dark:hover:bg-teal-500 dark:hover:text-slate-950 border border-teal-200 dark:border-teal-500/20 transition shadow-xs"
+                        >
+                          <BrainCircuit className="w-3 h-3 text-teal-600 dark:text-teal-400" />
+                          <span>Raio-X IA</span>
+                        </button>
+                      )}
+                      {onCompare && (
+                        <button
+                          onClick={() => onCompare(act)}
+                          title="Abrir no Duelo Virtual contra outra corrida"
+                          className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-500 hover:text-slate-950 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500 dark:hover:text-slate-950 border border-emerald-200 dark:border-emerald-500/20 transition shadow-xs"
+                        >
+                          <Swords className="w-3 h-3" />
+                          <span>Duelo</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
