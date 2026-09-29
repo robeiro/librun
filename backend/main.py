@@ -33,7 +33,7 @@ from gemini_service import (
 app = FastAPI(
     title="librun API",
     description="Motor de análise estatística de corrida e treinamento integrado ao Strava e Google Gemini IA",
-    version="1.0.0"
+    version="1.0.1"
 )
 
 # Enable CORS for frontend development
