@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 
@@ -13,12 +13,31 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
+export const viewport: Viewport = {
+  themeColor: "#10b981",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export const metadata: Metadata = {
   title: "librun — Inteligência & Estatísticas de Corrida Strava",
   description: "Análise profunda de dados do Strava, prevenção de lesões (ACWR), polarização 80/20 e diagnóstico de pontos fracos.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "librun",
+  },
+  icons: {
+    icon: "/icon.png",
+    apple: "/icon.png",
+  },
 };
 
 import { ThemeProvider } from "../context/ThemeContext";
+import { PwaInstallPrompt } from "../components/PwaInstallPrompt";
 
 export default function RootLayout({
   children,
@@ -53,6 +72,7 @@ export default function RootLayout({
       >
         <ThemeProvider>
           {children}
+          <PwaInstallPrompt />
         </ThemeProvider>
       </body>
     </html>

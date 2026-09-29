@@ -1,0 +1,9 @@
+node_modules
+.next
+__pycache__
+*.pyc
+*.pyo
+.git
+.github
+GEMINI.md
+test_venv/
