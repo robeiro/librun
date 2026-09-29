@@ -33,8 +33,8 @@ const DuelMap = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-[460px] sm:h-[520px] rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 text-sm">
-        Carregando mapa GPS...
+      <div className="h-[260px] sm:h-[300px] rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 text-xs">
+        Carregando traçado GPS...
       </div>
     ),
   }
@@ -127,7 +127,7 @@ export const ActivityDuel: React.FC<ActivityDuelProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [progressRatio, setProgressRatio] = useState<number>(0); // 0 to 1
   const [speedMultiplier, setSpeedMultiplier] = useState<number>(5); // 1x, 2x, 5x, 10x, 25x
-  const [viewMode, setViewMode] = useState<"map" | "track">("map");
+  const [showGpsMap, setShowGpsMap] = useState<boolean>(true);
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number | null>(null);
 
@@ -558,32 +558,20 @@ export const ActivityDuel: React.FC<ActivityDuelProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* View Mode Toggle: Real GPS Map vs Track */}
-            <div className="flex items-center space-x-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setViewMode("map")}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition ${
-                  viewMode === "map"
-                    ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs"
-                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
-                }`}
-              >
-                <MapIcon className="w-3.5 h-3.5" />
-                <span>Mapa GPS</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("track")}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition ${
-                  viewMode === "track"
-                    ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs"
-                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
-                }`}
-              >
-                <span>🏟️ Pista Estádio</span>
-              </button>
-            </div>
+            {/* Toggle GPS Mini-Map */}
+            <button
+              type="button"
+              onClick={() => setShowGpsMap(!showGpsMap)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition shadow-xs ${
+                showGpsMap
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                  : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+              }`}
+              title="Exibir ou ocultar o traçado geográfico real com mapa de GPS"
+            >
+              <MapIcon className="w-3.5 h-3.5" />
+              <span>{showGpsMap ? "Ocultar Mapa GPS" : "Mostrar Mapa GPS"}</span>
+            </button>
 
             {/* Real-time Gap Banner */}
             <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-xs font-bold">
@@ -604,96 +592,107 @@ export const ActivityDuel: React.FC<ActivityDuelProps> = ({
           </div>
         </div>
 
-        {/* SIMULATION VISUALIZATION (GPS MAP OR STADIUM TRACK) */}
-        {viewMode === "map" ? (
-          <DuelMap
-            actA={actA}
-            actB={actB}
-            distACovered={distACovered}
-            distBCovered={distBCovered}
-            raceDistanceMeters={raceDistanceMeters}
-            isDark={isDark}
-            isPlaying={isPlaying}
-            formatActivityName={formatActivityName}
+        {/* 1. PISTA DE ESTÁDIO LADO A LADO (Visual Principal, Leve e Fluido) */}
+        <div className="bg-slate-900 dark:bg-slate-950 border border-slate-700 dark:border-slate-800 rounded-2xl p-4 sm:p-6 relative select-none">
+          {/* Finish Line Ribbon */}
+          <div className="absolute right-8 top-0 bottom-0 w-2.5 bg-repeating-linear-gradient flex flex-col justify-around z-10 border-l border-r border-slate-400 opacity-80"
+               style={{
+                 backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 10px, #000 10px, #000 20px)"
+               }}
           />
-        ) : (
-          /* RACE TRACK CONTAINER */
-          <div className="bg-slate-900 dark:bg-slate-950 border border-slate-700 dark:border-slate-800 rounded-2xl p-4 sm:p-6 relative select-none">
-            {/* Finish Line Ribbon */}
-            <div className="absolute right-8 top-0 bottom-0 w-2.5 bg-repeating-linear-gradient flex flex-col justify-around z-10 border-l border-r border-slate-400 opacity-80"
-                 style={{
-                   backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 10px, #000 10px, #000 20px)"
-                 }}
+
+          {/* Start and Distance markers */}
+          <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-4 px-2">
+            <span>🏁 Largada (0 km)</span>
+            <span>25% ({(raceDistanceMeters * 0.25 / 1000).toFixed(1)}k)</span>
+            <span>50% ({(raceDistanceMeters * 0.50 / 1000).toFixed(1)}k)</span>
+            <span>75% ({(raceDistanceMeters * 0.75 / 1000).toFixed(1)}k)</span>
+            <span className="text-amber-400 font-extrabold pr-4">🏆 Chegada ({raceDistanceKm}k)</span>
+          </div>
+
+          {/* PISTA 1: CORREDOR A (LADO A LADO) */}
+          <div className="relative h-20 bg-slate-800/80 rounded-xl border border-slate-700/80 mb-3 flex items-center px-4 overflow-hidden">
+            {/* Lane line dashes */}
+            <div className="absolute inset-x-0 bottom-0 h-0.5 border-b border-dashed border-slate-600" />
+            <div className="absolute left-3 top-2 text-[10px] font-bold text-emerald-400/80 flex items-center space-x-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>Pista 1: {actA ? formatActivityName(actA) : "Corredor A"}</span>
+            </div>
+
+            {/* Runner A Avatar moving across lane */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 transition-all duration-75 flex flex-col items-center"
+              style={{
+                left: `clamp(12px, ${posAPercent}%, calc(100% - 70px))`,
+              }}
+            >
+              {/* Dynamic Tag */}
+              <div className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap mb-1 flex items-center space-x-1">
+                <span>{(distACovered / 1000).toFixed(2)} km</span>
+              </div>
+              {/* Runner Icon */}
+              <div
+                className={`w-9 h-9 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold shadow-lg shadow-emerald-500/40 text-base ${isPlaying ? "animate-bounce" : ""}`}
+                title={formatActivityName(actA)}
+              >
+                🏃‍♂️
+              </div>
+            </div>
+          </div>
+
+          {/* PISTA 2: CORREDOR B (LADO A LADO) */}
+          <div className="relative h-20 bg-slate-800/80 rounded-xl border border-slate-700/80 flex items-center px-4 overflow-hidden">
+            {/* Lane line dashes */}
+            <div className="absolute inset-x-0 bottom-0 h-0.5 border-b border-dashed border-slate-600" />
+            <div className="absolute left-3 top-2 text-[10px] font-bold text-cyan-400/80 flex items-center space-x-1">
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span>Pista 2: {actB ? formatActivityName(actB) : "Corredor B"}</span>
+            </div>
+
+            {/* Runner B Avatar moving across lane */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 transition-all duration-75 flex flex-col items-center"
+              style={{
+                left: `clamp(12px, ${posBPercent}%, calc(100% - 70px))`,
+              }}
+            >
+              {/* Dynamic Tag */}
+              <div className="bg-cyan-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap mb-1 flex items-center space-x-1">
+                <span>{(distBCovered / 1000).toFixed(2)} km</span>
+              </div>
+              {/* Runner Icon */}
+              <div
+                className={`w-9 h-9 rounded-full bg-cyan-400 text-slate-950 flex items-center justify-center font-bold shadow-lg shadow-cyan-400/40 text-base ${isPlaying ? "animate-bounce" : ""}`}
+                title={formatActivityName(actB)}
+              >
+                🏃‍♀️
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. MINI-MAPA GPS SINCRONIZADO (Opcional e leve, logo abaixo da pista) */}
+        {showGpsMap && (
+          <div className="space-y-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between text-xs px-1">
+              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1.5">
+                <MapIcon className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Posicionamento Real no GPS (Ruas e Curvas)</span>
+              </span>
+              <span className="text-[11px] text-slate-400 hidden sm:inline">
+                Corredores posicionados lado a lado nas ruas
+              </span>
+            </div>
+            <DuelMap
+              actA={actA}
+              actB={actB}
+              distACovered={distACovered}
+              distBCovered={distBCovered}
+              raceDistanceMeters={raceDistanceMeters}
+              isDark={isDark}
+              isPlaying={isPlaying}
+              formatActivityName={formatActivityName}
             />
-
-            {/* Start and Distance markers */}
-            <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-4 px-2">
-              <span>🏁 Largada (0 km)</span>
-              <span>25% ({(raceDistanceMeters * 0.25 / 1000).toFixed(1)}k)</span>
-              <span>50% ({(raceDistanceMeters * 0.50 / 1000).toFixed(1)}k)</span>
-              <span>75% ({(raceDistanceMeters * 0.75 / 1000).toFixed(1)}k)</span>
-              <span className="text-amber-400 font-extrabold pr-4">🏆 Chegada ({raceDistanceKm}k)</span>
-            </div>
-
-            {/* PISTA 1: CORREDOR A */}
-            <div className="relative h-20 bg-slate-800/80 rounded-xl border border-slate-700/80 mb-3 flex items-center px-4 overflow-hidden">
-              {/* Lane line dashes */}
-              <div className="absolute inset-x-0 bottom-0 h-0.5 border-b border-dashed border-slate-600" />
-              <div className="absolute left-3 top-2 text-[10px] font-bold text-emerald-400/80 flex items-center space-x-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Pista 1: {actA ? formatActivityName(actA) : "Corredor A"}</span>
-              </div>
-
-              {/* Runner A Avatar moving across lane */}
-              <div
-                className="absolute top-1/2 -translate-y-1/2 transition-all duration-75 flex flex-col items-center"
-                style={{
-                  left: `clamp(12px, ${posAPercent}%, calc(100% - 70px))`,
-                }}
-              >
-                {/* Dynamic Tag */}
-                <div className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap mb-1 flex items-center space-x-1">
-                  <span>{(distACovered / 1000).toFixed(2)} km</span>
-                </div>
-                {/* Runner Icon */}
-                <div
-                  className={`w-9 h-9 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold shadow-lg shadow-emerald-500/40 text-base ${isPlaying ? "animate-bounce" : ""}`}
-                  title={formatActivityName(actA)}
-                >
-                  🏃‍♂️
-                </div>
-              </div>
-            </div>
-
-            {/* PISTA 2: CORREDOR B */}
-            <div className="relative h-20 bg-slate-800/80 rounded-xl border border-slate-700/80 flex items-center px-4 overflow-hidden">
-              {/* Lane line dashes */}
-              <div className="absolute inset-x-0 bottom-0 h-0.5 border-b border-dashed border-slate-600" />
-              <div className="absolute left-3 top-2 text-[10px] font-bold text-cyan-400/80 flex items-center space-x-1">
-                <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                <span>Pista 2: {actB ? formatActivityName(actB) : "Corredor B"}</span>
-              </div>
-
-              {/* Runner B Avatar moving across lane */}
-              <div
-                className="absolute top-1/2 -translate-y-1/2 transition-all duration-75 flex flex-col items-center"
-                style={{
-                  left: `clamp(12px, ${posBPercent}%, calc(100% - 70px))`,
-                }}
-              >
-                {/* Dynamic Tag */}
-                <div className="bg-cyan-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap mb-1 flex items-center space-x-1">
-                  <span>{(distBCovered / 1000).toFixed(2)} km</span>
-                </div>
-                {/* Runner Icon */}
-                <div
-                  className={`w-9 h-9 rounded-full bg-cyan-400 text-slate-950 flex items-center justify-center font-bold shadow-lg shadow-cyan-400/40 text-base ${isPlaying ? "animate-bounce" : ""}`}
-                  title={formatActivityName(actB)}
-                >
-                  🏃‍♀️
-                </div>
-              </div>
-            </div>
           </div>
         )}
 

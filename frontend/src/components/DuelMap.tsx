@@ -5,12 +5,8 @@ import { Activity } from "../types";
 import { 
   Maximize2, 
   LocateFixed, 
-  MapPin, 
-  Compass, 
   Layers, 
-  AlertTriangle,
-  Flag,
-  Trophy
+  AlertTriangle
 } from "lucide-react";
 import L from "leaflet";
 
@@ -83,7 +79,7 @@ function calculateCumulativeDistances(points: [number, number][]): number[] {
   return distances;
 }
 
-// Interpolate exact [lat, lng] given covered distance
+// Fast binary search interpolation for exact [lat, lng]
 function interpolatePosition(
   points: [number, number][],
   cumDistances: number[],
@@ -117,7 +113,6 @@ function interpolatePosition(
   return [lat, lng];
 }
 
-// Helper to extract polyline string
 function getPolylineString(act?: Activity | null): string | null {
   if (!act) return null;
   if (act.summary_polyline) return act.summary_polyline;
@@ -156,6 +151,7 @@ export const DuelMap: React.FC<DuelMapProps> = ({
 
   const [followRunners, setFollowRunners] = useState(false);
   const [mapStyle, setMapStyle] = useState<"standard" | "satellite">("standard");
+  const lastPanTimeRef = useRef<number>(0);
 
   // Decoded points & cumulative distances
   const polyAStr = useMemo(() => getPolylineString(actA), [actA]);
@@ -184,15 +180,15 @@ export const DuelMap: React.FC<DuelMapProps> = ({
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
-    if (mapInstanceRef.current) return; // already initialized
+    if (mapInstanceRef.current) return;
 
     const initialCenter: [number, number] = pointsA[0] || pointsB[0] || [-16.594, -49.312];
-    const initialZoom = 14;
 
     const map = L.map(mapContainerRef.current, {
       center: initialCenter,
-      zoom: initialZoom,
+      zoom: 14,
       zoomControl: false,
+      attributionControl: false,
     });
 
     L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -202,7 +198,7 @@ export const DuelMap: React.FC<DuelMapProps> = ({
       map.remove();
       mapInstanceRef.current = null;
     };
-  }, []); // Run once on mount
+  }, []);
 
   // Update Base Tile Layer based on isDark and mapStyle
   useEffect(() => {
@@ -214,24 +210,15 @@ export const DuelMap: React.FC<DuelMapProps> = ({
     }
 
     let tileUrl = "";
-    let attribution = "";
-
     if (mapStyle === "satellite") {
-      // Esri World Imagery (high-resolution satellite)
       tileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-      attribution = "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community";
     } else if (isDark) {
-      // CartoDB Dark Matter
       tileUrl = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-      attribution = '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap';
     } else {
-      // CartoDB Voyager / Positron
       tileUrl = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-      attribution = '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap';
     }
 
     const newTile = L.tileLayer(tileUrl, {
-      attribution,
       maxZoom: 19,
       subdomains: "abcd",
     }).addTo(map);
@@ -239,16 +226,18 @@ export const DuelMap: React.FC<DuelMapProps> = ({
     tileLayerRef.current = newTile;
   }, [isDark, mapStyle]);
 
-  // Update Route Polylines and Fit Bounds on Activity Change
+  // Draw Polylines and Markers ONCE when points change (Ultra-low CPU)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Clean up old polylines
+    // Clean up previous layers
     if (polylineARef.current) map.removeLayer(polylineARef.current);
     if (polylineBRef.current) map.removeLayer(polylineBRef.current);
     if (startMarkerRef.current) map.removeLayer(startMarkerRef.current);
     if (finishMarkerRef.current) map.removeLayer(finishMarkerRef.current);
+    if (markerARef.current) map.removeLayer(markerARef.current);
+    if (markerBRef.current) map.removeLayer(markerBRef.current);
 
     const allPoints: [number, number][] = [];
 
@@ -263,35 +252,48 @@ export const DuelMap: React.FC<DuelMapProps> = ({
       }).addTo(map);
       allPoints.push(...pointsA);
 
-      // Start Marker (Largada)
-      const startHtml = `
-        <div class="flex items-center justify-center w-7 h-7 rounded-full bg-emerald-500 text-slate-950 font-black shadow-lg border-2 border-white text-xs">
-          🏁
-        </div>
-      `;
+      // Start Marker
       startMarkerRef.current = L.marker(pointsA[0], {
         icon: L.divIcon({
-          html: startHtml,
+          html: `<div class="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500 text-slate-950 font-black shadow-md border-2 border-white text-[11px]">🏁</div>`,
           className: "",
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
         }),
       }).addTo(map);
 
-      // Finish Marker (Chegada)
+      // Finish Marker
       const finishPos = pointsA[pointsA.length - 1];
-      const finishHtml = `
-        <div class="flex items-center justify-center w-7 h-7 rounded-full bg-amber-500 text-slate-950 font-black shadow-lg border-2 border-white text-xs">
-          🏆
-        </div>
-      `;
       finishMarkerRef.current = L.marker(finishPos, {
         icon: L.divIcon({
-          html: finishHtml,
+          html: `<div class="flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black shadow-md border-2 border-white text-[11px]">🏆</div>`,
           className: "",
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
         }),
+      }).addTo(map);
+
+      // Runner A Avatar: OFFSET TO THE LEFT LANE (Lado a Lado)
+      // Uses a horizontal shift so both runners are always visible side by side even on identical street paths!
+      const initialPosA = pointsA[0];
+      const htmlA = `
+        <div class="flex flex-col items-center pointer-events-none -translate-x-[115%] -translate-y-1/2">
+          <div class="bg-emerald-500 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-full shadow-md border border-emerald-300 whitespace-nowrap mb-0.5">
+            <span id="map-dist-a-label">0.00 km</span>
+          </div>
+          <div class="w-8 h-8 rounded-full bg-emerald-500 text-slate-950 border-2 border-white flex items-center justify-center font-bold text-sm shadow-lg shadow-emerald-500/50">
+            🏃‍♂️
+          </div>
+        </div>
+      `;
+      markerARef.current = L.marker(initialPosA, {
+        icon: L.divIcon({
+          html: htmlA,
+          className: "",
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        }),
+        zIndexOffset: 1000,
       }).addTo(map);
     }
 
@@ -306,77 +308,20 @@ export const DuelMap: React.FC<DuelMapProps> = ({
         lineJoin: "round",
       }).addTo(map);
       allPoints.push(...pointsB);
-    }
 
-    // Auto-fit map to encompass both courses
-    if (allPoints.length > 0) {
-      const bounds = L.latLngBounds(allPoints);
-      map.fitBounds(bounds, {
-        padding: [50, 50],
-        maxZoom: 16,
-      });
-    }
-  }, [pointsA, pointsB, hasGPSA, hasGPSB]);
-
-  // Update Dynamic Runner A Marker Position
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !posA) return;
-
-    const kmCovered = (distACovered / 1000).toFixed(2);
-    const htmlA = `
-      <div class="flex flex-col items-center pointer-events-none -translate-x-1/2 -translate-y-1/2" style="width: 140px;">
-        <div class="bg-emerald-500 text-slate-950 font-black text-[9px] px-2 py-0.5 rounded-full shadow-lg border border-emerald-400 whitespace-nowrap mb-0.5 animate-pulse">
-          ${actA ? formatActivityName(actA) : "Corredor A"} (${kmCovered} km)
+      // Runner B Avatar: OFFSET TO THE RIGHT LANE (Lado a Lado)
+      const initialPosB = pointsB[0];
+      const htmlB = `
+        <div class="flex flex-col items-center pointer-events-none translate-x-[15%] -translate-y-1/2">
+          <div class="bg-cyan-400 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-full shadow-md border border-cyan-200 whitespace-nowrap mb-0.5">
+            <span id="map-dist-b-label">0.00 km</span>
+          </div>
+          <div class="w-8 h-8 rounded-full bg-cyan-400 text-slate-950 border-2 border-white flex items-center justify-center font-bold text-sm shadow-lg shadow-cyan-400/50">
+            🏃‍♀️
+          </div>
         </div>
-        <div class="w-8 h-8 rounded-full bg-emerald-500 text-slate-950 border-2 border-white flex items-center justify-center font-bold text-sm shadow-xl shadow-emerald-500/50 ${isPlaying ? "scale-110" : ""}">
-          🏃‍♂️
-        </div>
-      </div>
-    `;
-
-    if (!markerARef.current) {
-      markerARef.current = L.marker(posA, {
-        icon: L.divIcon({
-          html: htmlA,
-          className: "",
-          iconSize: [0, 0],
-          iconAnchor: [0, 0],
-        }),
-        zIndexOffset: 1000,
-      }).addTo(map);
-    } else {
-      markerARef.current.setLatLng(posA);
-      markerARef.current.setIcon(
-        L.divIcon({
-          html: htmlA,
-          className: "",
-          iconSize: [0, 0],
-          iconAnchor: [0, 0],
-        })
-      );
-    }
-  }, [posA, distACovered, actA, isPlaying, formatActivityName]);
-
-  // Update Dynamic Runner B Marker Position
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !posB) return;
-
-    const kmCovered = (distBCovered / 1000).toFixed(2);
-    const htmlB = `
-      <div class="flex flex-col items-center pointer-events-none -translate-x-1/2 -translate-y-1/2" style="width: 140px;">
-        <div class="bg-cyan-400 text-slate-950 font-black text-[9px] px-2 py-0.5 rounded-full shadow-lg border border-cyan-300 whitespace-nowrap mb-0.5 animate-pulse">
-          ${actB ? formatActivityName(actB) : "Corredor B"} (${kmCovered} km)
-        </div>
-        <div class="w-8 h-8 rounded-full bg-cyan-400 text-slate-950 border-2 border-white flex items-center justify-center font-bold text-sm shadow-xl shadow-cyan-400/50 ${isPlaying ? "scale-110" : ""}">
-          🏃‍♀️
-        </div>
-      </div>
-    `;
-
-    if (!markerBRef.current) {
-      markerBRef.current = L.marker(posB, {
+      `;
+      markerBRef.current = L.marker(initialPosB, {
         icon: L.divIcon({
           html: htmlB,
           className: "",
@@ -385,29 +330,48 @@ export const DuelMap: React.FC<DuelMapProps> = ({
         }),
         zIndexOffset: 990,
       }).addTo(map);
-    } else {
-      markerBRef.current.setLatLng(posB);
-      markerBRef.current.setIcon(
-        L.divIcon({
-          html: htmlB,
-          className: "",
-          iconSize: [0, 0],
-          iconAnchor: [0, 0],
-        })
-      );
     }
-  }, [posB, distBCovered, actB, isPlaying, formatActivityName]);
 
-  // Follow runners with camera when enabled
+    // Auto-fit bounds
+    if (allPoints.length > 0) {
+      map.fitBounds(L.latLngBounds(allPoints), {
+        padding: [30, 30],
+        maxZoom: 16,
+      });
+    }
+  }, [pointsA, pointsB, hasGPSA, hasGPSB]);
+
+  // ULTRA FAST Position Updates (setLatLng only - Zero DOM teardowns, 60fps silky smooth)
+  useEffect(() => {
+    if (posA && markerARef.current) {
+      markerARef.current.setLatLng(posA);
+      const labelA = document.getElementById("map-dist-a-label");
+      if (labelA) {
+        labelA.textContent = `${(distACovered / 1000).toFixed(2)} km`;
+      }
+    }
+
+    if (posB && markerBRef.current) {
+      markerBRef.current.setLatLng(posB);
+      const labelB = document.getElementById("map-dist-b-label");
+      if (labelB) {
+        labelB.textContent = `${(distBCovered / 1000).toFixed(2)} km`;
+      }
+    }
+  }, [posA, posB, distACovered, distBCovered]);
+
+  // Throttled camera follow (pan smoothly max once every 1.5s to prevent Leaflet lag)
   useEffect(() => {
     if (!followRunners || !mapInstanceRef.current) return;
+    const now = Date.now();
+    if (now - lastPanTimeRef.current < 1400) return;
+    lastPanTimeRef.current = now;
+
     const map = mapInstanceRef.current;
     if (posA && posB) {
-      const midLat = (posA[0] + posB[0]) / 2;
-      const midLng = (posA[1] + posB[1]) / 2;
-      map.panTo([midLat, midLng], { animate: true, duration: 0.3 });
+      map.panTo([(posA[0] + posB[0]) / 2, (posA[1] + posB[1]) / 2], { animate: true, duration: 0.6 });
     } else if (posA) {
-      map.panTo(posA, { animate: true, duration: 0.3 });
+      map.panTo(posA, { animate: true, duration: 0.6 });
     }
   }, [posA, posB, followRunners]);
 
@@ -417,101 +381,100 @@ export const DuelMap: React.FC<DuelMapProps> = ({
     if (!map) return;
     const all = [...pointsA, ...pointsB];
     if (all.length > 0) {
-      map.fitBounds(L.latLngBounds(all), { padding: [50, 50], maxZoom: 16 });
+      map.fitBounds(L.latLngBounds(all), { padding: [30, 30], maxZoom: 16 });
       setFollowRunners(false);
     }
   };
 
   if (!hasGPSA && !hasGPSB) {
     return (
-      <div className="bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center space-y-3">
-        <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
-        <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-          Nenhuma rota GPS disponível para estas atividades
-        </h4>
-        <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-          As atividades selecionadas não possuem coordenadas de mapa salvas (ex.: treinos manuais ou esteira). Use o <strong>Modo Pista Virtual</strong> para acompanhar a disputa lado a lado!
+      <div className="bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-center space-y-1">
+        <AlertTriangle className="w-5 h-5 text-amber-500 mx-auto" />
+        <p className="text-xs text-slate-600 dark:text-slate-400">
+          Traçado de GPS não disponível nestas atividades (treino indoor ou sem mapa).
         </p>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full h-[460px] sm:h-[520px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-inner bg-slate-950">
+    <div className="relative w-full h-[260px] sm:h-[300px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-inner bg-slate-950">
       {/* MAP CANVAS */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
       {/* TOP FLOATING CONTROLS & HUD */}
-      <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
-        {/* Route Indicators */}
-        <div className="flex items-center space-x-2 bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 text-xs shadow-lg pointer-events-auto">
-          <div className="flex items-center space-x-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-            <span className="font-bold text-emerald-400 truncate max-w-[130px] sm:max-w-[180px]">
+      <div className="absolute top-2.5 left-2.5 right-2.5 z-10 flex flex-wrap items-center justify-between gap-1.5 pointer-events-none">
+        {/* Route Indicators Side by Side */}
+        <div className="flex items-center space-x-2 bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-slate-700/80 text-[11px] shadow-lg pointer-events-auto">
+          <div className="flex items-center space-x-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="font-bold text-emerald-400 truncate max-w-[110px] sm:max-w-[150px]">
               {actA ? formatActivityName(actA) : "Pista 1"}
             </span>
           </div>
-          <span className="text-slate-500">vs</span>
-          <div className="flex items-center space-x-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-            <span className="font-bold text-cyan-400 truncate max-w-[130px] sm:max-w-[180px]">
+          <span className="text-slate-500 text-[10px]">vs</span>
+          <div className="flex items-center space-x-1">
+            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+            <span className="font-bold text-cyan-400 truncate max-w-[110px] sm:max-w-[150px]">
               {actB ? formatActivityName(actB) : "Pista 2"}
             </span>
           </div>
+          <span className="text-[10px] text-emerald-400/90 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
+            Lado a Lado
+          </span>
         </div>
 
         {/* Map Actions Button Group */}
-        <div className="flex items-center space-x-1.5 bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-md p-1 rounded-xl border border-slate-700/80 shadow-lg pointer-events-auto text-xs font-semibold">
+        <div className="flex items-center space-x-1 bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-md p-1 rounded-xl border border-slate-700/80 shadow-lg pointer-events-auto text-[11px] font-semibold">
           <button
+            type="button"
             onClick={() => setFollowRunners(!followRunners)}
-            className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg transition ${
+            className={`flex items-center space-x-1 px-2 py-1 rounded-lg transition ${
               followRunners
                 ? "bg-emerald-500 text-slate-950 font-bold"
                 : "text-slate-300 hover:bg-slate-800"
             }`}
             title="Acompanhar corredores automaticamente com a câmera"
           >
-            <LocateFixed className="w-3.5 h-3.5" />
+            <LocateFixed className="w-3 h-3" />
             <span className="hidden sm:inline">Auto-seguir</span>
           </button>
 
           <button
+            type="button"
             onClick={handleFitBounds}
-            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-slate-300 hover:bg-slate-800 transition"
+            className="flex items-center space-x-1 px-2 py-1 rounded-lg text-slate-300 hover:bg-slate-800 transition"
             title="Enquadrar percurso inteiro na tela"
           >
-            <Maximize2 className="w-3.5 h-3.5" />
+            <Maximize2 className="w-3 h-3" />
             <span className="hidden sm:inline">Enquadrar</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setMapStyle(mapStyle === "standard" ? "satellite" : "standard")}
-            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-slate-300 hover:bg-slate-800 transition"
+            className="flex items-center space-x-1 px-2 py-1 rounded-lg text-slate-300 hover:bg-slate-800 transition"
             title="Alternar entre visualização de Ruas e Satélite"
           >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <Layers className="w-3 h-3 text-cyan-400" />
             <span>{mapStyle === "standard" ? "Satélite" : "Ruas"}</span>
           </button>
         </div>
       </div>
 
       {/* BOTTOM LEGEND INFO BANNER */}
-      <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
-        <div className="bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 text-[11px] text-slate-300 shadow-lg flex items-center space-x-3 pointer-events-auto">
-          <span className="flex items-center space-x-1 font-semibold">
-            <span>🏁 Largada</span>
-          </span>
+      <div className="absolute bottom-2 left-2 z-10 pointer-events-none">
+        <div className="bg-slate-900/90 dark:bg-slate-950/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-slate-700/80 text-[10px] text-slate-300 shadow-lg flex items-center space-x-2 pointer-events-auto">
+          <span>🏁 Largada</span>
           <span className="text-slate-600">•</span>
-          <span className="flex items-center space-x-1 font-semibold text-amber-400">
-            <span>🏆 Chegada ({(raceDistanceMeters / 1000).toFixed(2)} km)</span>
-          </span>
+          <span className="text-amber-400 font-bold">🏆 {(raceDistanceMeters / 1000).toFixed(2)} km</span>
           {pointsA.length > 0 && pointsB.length > 0 && (
             <>
               <span className="text-slate-600">•</span>
-              <span className="text-emerald-400 font-bold">
+              <span className="text-emerald-400 font-medium">
                 {Math.abs(pointsA[0][0] - pointsB[0][0]) < 0.005 && Math.abs(pointsA[0][1] - pointsB[0][1]) < 0.005
-                  ? "✓ Mesmo circuito real"
-                  : "Rotas diferentes"}
+                  ? "Mesmo circuito"
+                  : "Rotas distintas"}
               </span>
             </>
           )}
