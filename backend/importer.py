@@ -4,7 +4,6 @@ import zipfile
 import gzip
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
-import pandas as pd
 
 from database import upsert_activity
 
