@@ -45,9 +45,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def normalize_path_middleware(request, call_next):
+    path = request.scope.get("path", "")
+    while "//" in path:
+        path = path.replace("//", "/")
+    while path.startswith("/api/api/"):
+        path = path[4:]
+    request.scope["path"] = path
+    return await call_next(request)
+
 @app.on_event("startup")
 def on_startup():
     init_db()
+
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "service": "librun API",
+        "docs": "/docs",
+        "version": "1.0.0"
+    }
+
+@app.get("/health")
+def health_root():
+    return {"status": "ok", "service": "librun"}
 
 @app.get("/api/health")
 def health():

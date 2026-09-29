@@ -102,6 +102,15 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
+    const error = params.get("error");
+
+    if (error) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showToast(`Autorização cancelada ou recusada pelo Strava: ${error}`);
+      fetchData();
+      return;
+    }
+
     if (code) {
       // Clean query params from URL
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -111,27 +120,33 @@ export default function Home() {
         showToast("Conectando ao Strava e sincronizando suas corridas...");
         try {
           const savedLimit = typeof window !== "undefined" ? localStorage.getItem("librun_sync_limit") : null;
+          const savedClientId = typeof window !== "undefined" ? localStorage.getItem("librun_client_id") : null;
           const syncCount = savedLimit !== null ? parseInt(savedLimit, 10) : 0;
           const exRes = await fetch("/api/strava/callback", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               code: code,
+              client_id: savedClientId || undefined,
               sync_count: syncCount,
             }),
           });
           const exData = await exRes.json();
           if (exRes.ok) {
-            const countMsg = exData.sync?.runs_synced 
-              ? `${exData.sync.runs_synced} corridas importadas!` 
-              : "Suas corridas foram importadas.";
-            showToast(`Conta do Strava conectada com sucesso! ${countMsg}`);
+            if (exData.sync_error) {
+              showToast(`Strava conectado, mas houve erro ao importar corridas: ${exData.sync_error}`);
+            } else {
+              const countMsg = exData.sync?.runs_synced 
+                ? `${exData.sync.runs_synced} corridas importadas com sucesso!` 
+                : "Suas corridas foram importadas.";
+              showToast(`Conta do Strava conectada com sucesso! ${countMsg}`);
+            }
           } else {
-            showToast(`Erro na autorização: ${exData.detail || "Verifique credenciais"}`);
+            showToast(`Erro na autorização do Strava: ${exData.detail || "Verifique as credenciais no painel do Strava"}`);
           }
         } catch (e) {
           console.error("Erro no callback Strava:", e);
-          showToast("Falha ao comunicar com o servidor.");
+          showToast("Falha ao comunicar com o servidor. Verifique se o backend está online.");
         } finally {
           await fetchData();
           setIsLoading(false);

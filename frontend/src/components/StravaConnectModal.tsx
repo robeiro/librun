@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, UploadCloud, CheckCircle2, AlertCircle, FileText, ArrowRight, ExternalLink } from "lucide-react";
+import { X, UploadCloud, CheckCircle2, AlertCircle, FileText, ArrowRight, ExternalLink, Copy, Check } from "lucide-react";
 import { AthleteSettings } from "../types";
 
 interface StravaConnectModalProps {
@@ -23,6 +23,17 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+
+  const currentDomain = typeof window !== "undefined" ? window.location.hostname : "localhost";
+
+  const handleCopyDomain = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(currentDomain);
+      setCopiedDomain(true);
+      setTimeout(() => setCopiedDomain(false), 2000);
+    }
+  };
 
   const [syncLimit, setSyncLimit] = useState<number>(() => {
     if (typeof window !== "undefined") {
@@ -73,9 +84,35 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
     }
     setErrorMsg(null);
     setIsSyncing(true);
+    setUploadStatus("Iniciando autorização com o Strava...");
 
     try {
+      localStorage.setItem("librun_client_id", clientId.trim());
       localStorage.setItem("librun_sync_limit", String(syncLimit));
+
+      // 1. Salvar credenciais no backend antes de sair da página
+      const settingsPayload: { strava_client_id: string; strava_client_secret?: string } = {
+        strava_client_id: clientId.trim(),
+      };
+      if (clientSecret.trim()) {
+        settingsPayload.strava_client_secret = clientSecret.trim();
+      }
+
+      const setRes = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settingsPayload),
+      });
+
+      if (!setRes.ok) {
+        const setData = await setRes.json().catch(() => ({}));
+        throw new Error(
+          setData.detail ||
+          `Falha ao salvar configurações (HTTP ${setRes.status}). Verifique se o servidor backend está online.`
+        );
+      }
+
+      // 2. Obter URL de autorização do Strava
       const redirectUri = window.location.origin + "/";
       const res = await fetch("/api/strava/auth-url", {
         method: "POST",
@@ -85,23 +122,21 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
           redirect_uri: redirectUri,
         }),
       });
-      const data = await res.json();
-      if (data.url) {
-        // Save client secret if provided
-        if (clientSecret.trim()) {
-          await fetch("/api/settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              strava_client_id: clientId.trim(),
-              strava_client_secret: clientSecret.trim(),
-            }),
-          });
-        }
-        window.location.href = data.url;
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) {
+        throw new Error(
+          data.detail ||
+          data.error ||
+          `Erro ao obter URL do Strava (HTTP ${res.status}). Verifique se o backend está conectado.`
+        );
       }
+
+      // 3. Redirecionar usuário para o Strava
+      window.location.href = data.url;
     } catch (err: unknown) {
       setErrorMsg((err as Error).message || "Erro ao iniciar autenticação Strava.");
+      setUploadStatus(null);
       setIsSyncing(false);
     }
   };
@@ -203,12 +238,45 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
-              <ol className="list-decimal list-inside space-y-1 text-slate-600 dark:text-slate-400 text-[11px]">
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-600 dark:text-slate-400 text-[11px]">
                 <li>Acesse <strong>strava.com/settings/api</strong>.</li>
-                <li>Crie uma aplicação (Ex: <em>librun</em>).</li>
-                <li>No campo <strong>Authorization Callback Domain</strong>, digite: <code className="bg-slate-200 dark:bg-slate-800 px-1 py-0.5 rounded text-emerald-700 dark:text-emerald-400">localhost</code>.</li>
-                <li>Copie o <strong>Client ID</strong> e o <strong>Client Secret</strong> abaixo:</li>
+                <li>Crie ou edite sua aplicação Strava (Ex: <em>librun</em>).</li>
+                <li className="leading-relaxed">
+                  No campo <strong>Authorization Callback Domain</strong>, digite exatamente:
+                  <span className="inline-flex items-center gap-1.5 ml-1 my-0.5">
+                    <code className="bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700/60 px-2 py-0.5 rounded text-emerald-800 dark:text-emerald-300 font-mono font-bold text-xs select-all">
+                      {currentDomain}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={handleCopyDomain}
+                      className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-[10px] font-semibold transition inline-flex items-center gap-1 text-slate-700 dark:text-slate-200"
+                    >
+                      {copiedDomain ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-500" />
+                          <span>Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copiar</span>
+                        </>
+                      )}
+                    </button>
+                  </span>
+                </li>
+                <li>Copie o <strong>Client ID</strong> e o <strong>Client Secret</strong> e cole nos campos abaixo:</li>
               </ol>
+
+              {currentDomain !== "localhost" && (
+                <div className="mt-2.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-700 dark:text-amber-400 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+                  <span>
+                    <strong>Atenção:</strong> Como este app está rodando em <code>{currentDomain}</code>, o Strava exige que o campo <em>Authorization Callback Domain</em> seja <strong>{currentDomain}</strong> (sem <code>https://</code> e sem barras).
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 text-xs">
