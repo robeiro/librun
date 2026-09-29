@@ -56,7 +56,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [restHr, setRestHr] = useState(athlete?.rest_hr || 55);
   const [targetDist, setTargetDist] = useState(athlete?.target_distance || "10k");
   const [targetTime, setTargetTime] = useState(athlete?.target_time_minutes || 50.0);
-  const [geminiKey, setGeminiKey] = useState("");
+  const [geminiKey, setGeminiKey] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("librun_gemini_api_key") || "";
+    }
+    return "";
+  });
   const [geminiModel, setGeminiModel] = useState<string>(
     athlete?.gemini_model || "gemini-flash-lite-latest"
   );
@@ -85,7 +90,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const url = keyToUse
         ? `/api/gemini/models?api_key=${encodeURIComponent(keyToUse)}`
         : `/api/gemini/models`;
-      const res = await fetch(url);
+      const headers: Record<string, string> = {};
+      if (keyToUse) {
+        headers["X-Gemini-Key"] = keyToUse;
+      }
+      const res = await fetch(url, { headers });
       const data = await res.json();
       if (res.ok && data.models && data.models.length > 0) {
         setAvailableModels(data.models);
@@ -102,9 +111,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsValidating(true);
     setTestResult(null);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (geminiKey.trim()) {
+        headers["X-Gemini-Key"] = geminiKey.trim();
+      }
       const res = await fetch("/api/gemini/validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ 
           api_key: geminiKey.trim() || undefined,
           chosen_model: geminiModel,
@@ -126,6 +139,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     e.preventDefault();
     setIsSaving(true);
     try {
+      // Save Gemini key strictly to client LocalStorage (never to server database)
+      if (typeof window !== "undefined") {
+        if (geminiKey.trim()) {
+          localStorage.setItem("librun_gemini_api_key", geminiKey.trim());
+        } else {
+          localStorage.removeItem("librun_gemini_api_key");
+        }
+      }
+
       const payload: Partial<AthleteSettings> = {
         athlete_name: name,
         max_hr: Number(maxHr),
@@ -134,9 +156,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         target_time_minutes: Number(targetTime),
         gemini_model: geminiModel,
       };
-      if (geminiKey.trim()) {
-        payload.gemini_api_key = geminiKey.trim();
-      }
       await onSave(payload);
       onClose();
     } finally {
@@ -311,17 +330,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>Chave Google Gemini API (Coach IA)</span>
               </label>
 
-              {athlete?.gemini_api_key_configured && (
+              {geminiKey.trim() ? (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center space-x-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  <span>Configurada ({athlete.gemini_api_key_masked})</span>
+                  <span>Salva neste navegador (Local)</span>
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                  Não configurada neste aparelho
                 </span>
               )}
             </div>
 
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-              Necessária para gerar o diagnóstico com inteligência artificial, avaliar a fisiologia dos treinos e prescrever o plano de 14 dias.
-            </p>
+            <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/20 text-[10px] text-emerald-700 dark:text-emerald-300 leading-tight">
+              🔒 <strong>Privacidade Total (Armazenamento Local):</strong> Sua chave é armazenada exclusivamente na memória deste navegador (LocalStorage). Ela <strong>nunca é gravada no banco de dados do servidor</strong> e não é compartilhada com outros dispositivos ou usuários.
+            </div>
 
             <div className="space-y-2">
               <div className="relative">
@@ -330,7 +353,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <input
                   type={showKey ? "text" : "password"}
-                  placeholder={athlete?.gemini_api_key_configured ? "Substituir chave existente..." : "Cole aqui sua chave AIzaSy..."}
+                  placeholder="Cole aqui sua chave AIzaSy... (salva apenas no aparelho)"
                   value={geminiKey}
                   onChange={(e) => {
                     setGeminiKey(e.target.value);

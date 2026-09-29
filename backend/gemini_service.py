@@ -25,12 +25,10 @@ KNOWN_POPULAR_MODELS = [
     {"id": "gemini-1.5-flash", "displayName": "Gemini 1.5 Flash (Legado)", "description": "Versão 1.5 Flash legada."},
 ]
 
-def get_gemini_key() -> Optional[str]:
-    """Retrieve Gemini API key from database settings or environment variable."""
-    settings = get_athlete_settings()
-    key = settings.get("gemini_api_key")
-    if key and key.strip():
-        return key.strip()
+def get_gemini_key(override_key: Optional[str] = None) -> Optional[str]:
+    """Retrieve Gemini API key from explicit client override or environment variable."""
+    if override_key and override_key.strip():
+        return override_key.strip()
     env_key = os.environ.get("GEMINI_API_KEY")
     if env_key and env_key.strip():
         return env_key.strip()
@@ -247,7 +245,8 @@ async def generate_global_coaching_analysis(
     activities: List[Dict[str, Any]],
     settings: Dict[str, Any],
     analytics: Dict[str, Any],
-    force_refresh: bool = False
+    force_refresh: bool = False,
+    api_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """Generates an in-depth AI coaching diagnosis of the athlete's overall fitness, 80/20 balance, ACWR, and next 14 days action plan."""
     if not force_refresh:
@@ -261,7 +260,7 @@ async def generate_global_coaching_analysis(
                 "model_used": cached.get("model_used") or get_gemini_model()
             }
 
-    key = get_gemini_key()
+    key = get_gemini_key(api_key)
     if not key:
         return {
             "success": False,
@@ -379,21 +378,24 @@ Escreva em português brasileiro de forma direta, motivadora, usando termos téc
 
 async def generate_single_activity_analysis(
     activity: Dict[str, Any],
-    settings: Dict[str, Any]
+    settings: Dict[str, Any],
+    force_refresh: bool = False,
+    api_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """Generates an AI deep dive / debrief for a specific running session."""
     strava_id = str(activity.get("strava_id") or activity.get("id"))
-    cached = get_latest_ai_analysis("activity", target_id=strava_id)
-    if cached:
-        return {
-            "success": True,
-            "analysis": cached["content"],
-            "created_at": cached["created_at"],
-            "cached": True,
-            "model_used": cached.get("model_used") or get_gemini_model()
-        }
+    if not force_refresh:
+        cached = get_latest_ai_analysis("activity", target_id=strava_id)
+        if cached:
+            return {
+                "success": True,
+                "analysis": cached["content"],
+                "created_at": cached["created_at"],
+                "cached": True,
+                "model_used": cached.get("model_used") or get_gemini_model()
+            }
 
-    key = get_gemini_key()
+    key = get_gemini_key(api_key)
     if not key:
         return {
             "success": False,

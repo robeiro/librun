@@ -29,7 +29,10 @@ export const GeminiCoach: React.FC<GeminiCoachProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
-  const isKeyConfigured = athlete?.gemini_api_key_configured;
+  const isKeyConfigured = Boolean(
+    (typeof window !== "undefined" && localStorage.getItem("librun_gemini_api_key")) ||
+    athlete?.gemini_api_key_configured
+  );
 
   const fetchAnalysis = async (refresh: boolean = false) => {
     setIsLoading(true);
@@ -37,7 +40,12 @@ export const GeminiCoach: React.FC<GeminiCoachProps> = ({
     try {
       const url = refresh ? "/api/ai/coach/refresh" : "/api/ai/coach";
       const method = refresh ? "POST" : "GET";
-      const res = await fetch(url, { method });
+      const localKey = typeof window !== "undefined" ? localStorage.getItem("librun_gemini_api_key") : null;
+      const headers: Record<string, string> = {};
+      if (localKey) {
+        headers["X-Gemini-Key"] = localKey;
+      }
+      const res = await fetch(url, { method, headers });
       const data = await res.json();
       if (res.ok && data.success) {
         setAnalysis(data.analysis);

@@ -51,6 +51,17 @@ def init_db():
     VALUES (1, 'Corredor', 190, 55, '10k', 50.0, 'gemini-flash-lite-latest')
     """)
 
+    # Privacy & Local-first security:
+    # Ensure sensitive personal keys are never stored on the server database
+    cursor.execute("""
+    UPDATE athlete_settings 
+    SET strava_client_id = NULL,
+        strava_client_secret = NULL,
+        gemini_api_key = NULL
+    WHERE id = 1
+    """)
+    conn.commit()
+
     # Activities Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS activities (
@@ -105,10 +116,12 @@ def save_athlete_settings(settings: Dict[str, Any]):
     fields = []
     values = []
     for k, v in settings.items():
-        if k in ["strava_client_id", "strava_client_secret", "strava_access_token",
+        if k in ["gemini_api_key", "strava_client_secret"]:
+            continue  # Do not persist personal API keys or client secrets to server DB
+        if k in ["strava_client_id", "strava_access_token",
                  "strava_refresh_token", "strava_token_expires_at", "athlete_id",
                  "athlete_name", "max_hr", "rest_hr", "target_distance", "target_time_minutes",
-                 "gemini_api_key", "gemini_model"]:
+                 "gemini_model"]:
             fields.append(f"{k} = ?")
             values.append(v)
     

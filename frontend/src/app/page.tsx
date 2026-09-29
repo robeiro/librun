@@ -120,7 +120,8 @@ export default function Home() {
         showToast("Conectando ao Strava e sincronizando suas corridas...");
         try {
           const savedLimit = typeof window !== "undefined" ? localStorage.getItem("librun_sync_limit") : null;
-          const savedClientId = typeof window !== "undefined" ? localStorage.getItem("librun_client_id") : null;
+          const savedClientId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_id") : null;
+          const savedClientSecret = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_secret") : null;
           const syncCount = savedLimit !== null ? parseInt(savedLimit, 10) : 0;
           const exRes = await fetch("/api/strava/callback", {
             method: "POST",
@@ -128,6 +129,7 @@ export default function Home() {
             body: JSON.stringify({
               code: code,
               client_id: savedClientId || undefined,
+              client_secret: savedClientSecret || undefined,
               sync_count: syncCount,
             }),
           });

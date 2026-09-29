@@ -32,7 +32,10 @@ export const ActivityAiModal: React.FC<ActivityAiModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
-  const isKeyConfigured = athlete?.gemini_api_key_configured;
+  const isKeyConfigured = Boolean(
+    (typeof window !== "undefined" && localStorage.getItem("librun_gemini_api_key")) ||
+    athlete?.gemini_api_key_configured
+  );
 
   const loadAnalysis = useCallback(async (refresh: boolean = false) => {
     if (!activity) return;
@@ -41,7 +44,12 @@ export const ActivityAiModal: React.FC<ActivityAiModalProps> = ({
     try {
       const id = String(activity.strava_id || activity.id);
       const url = `/api/ai/activity/${id}${refresh ? "?force_refresh=true" : ""}`;
-      const res = await fetch(url);
+      const localKey = typeof window !== "undefined" ? localStorage.getItem("librun_gemini_api_key") : null;
+      const headers: Record<string, string> = {};
+      if (localKey) {
+        headers["X-Gemini-Key"] = localKey;
+      }
+      const res = await fetch(url, { headers });
       const data = await res.json();
       if (res.ok && data.success) {
         setAnalysis(data.analysis);

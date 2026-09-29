@@ -18,8 +18,18 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
   onRefreshData,
 }) => {
   const [activeTab, setActiveTab] = useState<"oauth" | "file" | "sample">("oauth");
-  const [clientId, setClientId] = useState(athlete?.strava_client_id || "");
-  const [clientSecret, setClientSecret] = useState("");
+  const [clientId, setClientId] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("librun_strava_client_id") || "";
+    }
+    return "";
+  });
+  const [clientSecret, setClientSecret] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("librun_strava_client_secret") || "";
+    }
+    return "";
+  });
   const [isSyncing, setIsSyncing] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -82,37 +92,21 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
       setErrorMsg("Por favor, preencha o Client ID do seu app Strava.");
       return;
     }
+    if (!clientSecret.trim()) {
+      setErrorMsg("Por favor, preencha o Client Secret do seu app Strava.");
+      return;
+    }
     setErrorMsg(null);
     setIsSyncing(true);
     setUploadStatus("Iniciando autorização com o Strava...");
 
     try {
-      localStorage.setItem("librun_client_id", clientId.trim());
+      // Salvar credenciais exclusivamente no LocalStorage do navegador deste dispositivo
+      localStorage.setItem("librun_strava_client_id", clientId.trim());
+      localStorage.setItem("librun_strava_client_secret", clientSecret.trim());
       localStorage.setItem("librun_sync_limit", String(syncLimit));
 
-      // 1. Salvar credenciais no backend antes de sair da página
-      const settingsPayload: { strava_client_id: string; strava_client_secret?: string } = {
-        strava_client_id: clientId.trim(),
-      };
-      if (clientSecret.trim()) {
-        settingsPayload.strava_client_secret = clientSecret.trim();
-      }
-
-      const setRes = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settingsPayload),
-      });
-
-      if (!setRes.ok) {
-        const setData = await setRes.json().catch(() => ({}));
-        throw new Error(
-          setData.detail ||
-          `Falha ao salvar configurações (HTTP ${setRes.status}). Verifique se o servidor backend está online.`
-        );
-      }
-
-      // 2. Obter URL de autorização do Strava
+      // Obter URL de autorização do Strava
       const redirectUri = window.location.origin;
       const res = await fetch("/api/strava/auth-url", {
         method: "POST",
@@ -132,7 +126,7 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
         );
       }
 
-      // 3. Redirecionar usuário para o Strava
+      // Redirecionar usuário para o Strava
       window.location.href = data.url;
     } catch (err: unknown) {
       setErrorMsg((err as Error).message || "Erro ao iniciar autenticação Strava.");
@@ -153,10 +147,17 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
 
     try {
       localStorage.setItem("librun_sync_limit", String(syncLimit));
+      const savedCid = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_id") : null;
+      const savedCsec = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_secret") : null;
+
       const res = await fetch("/api/strava/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ count: syncLimit }),
+        body: JSON.stringify({ 
+          count: syncLimit,
+          client_id: savedCid || undefined,
+          client_secret: savedCsec || undefined
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -279,6 +280,10 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
               )}
             </div>
 
+            <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/20 text-[10px] text-emerald-700 dark:text-emerald-300 leading-tight">
+              🔒 <strong>Privacidade Total (Armazenamento Local):</strong> O Client ID e o Client Secret são gravados apenas no seu navegador local (LocalStorage). Eles nunca são salvos publicamente no banco do servidor nem compartilhados entre aparelhos.
+            </div>
+
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
@@ -288,7 +293,14 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                   type="text"
                   placeholder="Ex: 123456"
                   value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setClientId(val);
+                    if (typeof window !== "undefined") {
+                      if (val.trim()) localStorage.setItem("librun_strava_client_id", val.trim());
+                      else localStorage.removeItem("librun_strava_client_id");
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:bg-white dark:focus:bg-slate-950 focus:border-emerald-500"
                 />
               </div>
@@ -299,9 +311,16 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                 </label>
                 <input
                   type="password"
-                  placeholder={athlete?.strava_client_secret_configured ? "•••••••• (Já salvo)" : "Ex: a1b2c3d4e5f6..."}
+                  placeholder="Ex: a1b2c3d4e5f6... (Salvo apenas neste aparelho)"
                   value={clientSecret}
-                  onChange={(e) => setClientSecret(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setClientSecret(val);
+                    if (typeof window !== "undefined") {
+                      if (val.trim()) localStorage.setItem("librun_strava_client_secret", val.trim());
+                      else localStorage.removeItem("librun_strava_client_secret");
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:bg-white dark:focus:bg-slate-950 focus:border-emerald-500"
                 />
               </div>

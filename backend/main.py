@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -91,36 +91,27 @@ class AthleteSettingsUpdate(BaseModel):
 def get_settings():
     settings = get_athlete_settings()
     masked = dict(settings)
-    # Mask Strava secret
-    if masked.get("strava_client_secret"):
-        masked["strava_client_secret_configured"] = True
-        masked["strava_client_secret"] = "••••••••"
-    else:
-        masked["strava_client_secret_configured"] = False
 
-    # Mask Gemini API key
-    if masked.get("gemini_api_key"):
-        raw_key = masked["gemini_api_key"].strip()
-        masked["gemini_api_key_configured"] = True
-        masked["gemini_api_key_masked"] = (raw_key[:6] + "..." + raw_key[-4:]) if len(raw_key) > 10 else "••••••••"
-        masked["gemini_api_key"] = "••••••••"
-    else:
-        env_key = os.environ.get("GEMINI_API_KEY")
-        if env_key:
-            masked["gemini_api_key_configured"] = True
-            masked["gemini_api_key_masked"] = "Variável de Ambiente (GEMINI_API_KEY)"
-            masked["gemini_api_key"] = "••••••••"
-        else:
-            masked["gemini_api_key_configured"] = False
-            masked["gemini_api_key_masked"] = None
-
-    masked["gemini_model"] = settings.get("gemini_model") or "gemini-1.5-flash"
+    # SECURITY & PRIVACY POLICY:
+    # Sensitive client credentials and keys are NEVER returned to clients from the server database.
+    # They are strictly local to each client device (LocalStorage).
+    masked["strava_client_id"] = None
+    masked["strava_client_secret"] = None
+    masked["strava_client_secret_configured"] = False
+    masked["gemini_api_key"] = None
+    masked["gemini_api_key_masked"] = None
+    masked["gemini_api_key_configured"] = bool(os.environ.get("GEMINI_API_KEY"))
+    masked["gemini_model"] = settings.get("gemini_model") or "gemini-flash-lite-latest"
     masked["has_strava_token"] = bool(masked.get("strava_access_token"))
     return masked
 
 @app.post("/api/settings")
 def update_settings(payload: AthleteSettingsUpdate):
-    data = {k: v for k, v in payload.dict().items() if v is not None}
+    # Only update athlete physical goals and profile settings. Never save personal API keys to server database.
+    data = {
+        k: v for k, v in payload.dict().items() 
+        if v is not None and k not in ["gemini_api_key", "strava_client_secret", "strava_client_id"]
+    }
     save_athlete_settings(data)
     return {"success": True, "settings": get_settings()}
 
@@ -207,7 +198,7 @@ class StravaOAuthUrlRequest(BaseModel):
 
 @app.post("/api/strava/auth-url")
 def generate_auth_url(payload: StravaOAuthUrlRequest):
-    save_athlete_settings({"strava_client_id": payload.client_id})
+    # Generates OAuth URL using client_id directly from the client request without saving to DB
     url = get_strava_auth_url(payload.client_id, payload.redirect_uri)
     return {"url": url}
 
@@ -230,7 +221,11 @@ async def exchange_token(payload: StravaExchangeRequest):
 
         # Automatically trigger sync with requested count (0 = todas)
         try:
-            sync_res = await sync_strava_activities(count=payload.sync_count if payload.sync_count is not None else 0)
+            sync_res = await sync_strava_activities(
+                count=payload.sync_count if payload.sync_count is not None else 0,
+                client_id=payload.client_id,
+                client_secret=payload.client_secret
+            )
             res["sync"] = sync_res
         except Exception as sync_err:
             res["sync_error"] = str(sync_err)
@@ -241,6 +236,8 @@ async def exchange_token(payload: StravaExchangeRequest):
 
 class StravaSyncRequest(BaseModel):
     count: Optional[int] = 0
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
 
 @app.post("/api/strava/sync")
 async def sync_activities(
@@ -248,13 +245,18 @@ async def sync_activities(
     count: Optional[int] = Query(default=None)
 ):
     target_count = 0
-    if payload and payload.count is not None:
-        target_count = payload.count
+    cid = None
+    csecret = None
+    if payload:
+        if payload.count is not None:
+            target_count = payload.count
+        cid = payload.client_id
+        csecret = payload.client_secret
     elif count is not None:
         target_count = count
 
     try:
-        res = await sync_strava_activities(count=target_count)
+        res = await sync_strava_activities(count=target_count, client_id=cid, client_secret=csecret)
         return res
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -270,14 +272,20 @@ class GeminiValidateRequest(BaseModel):
     chosen_model: Optional[str] = None
 
 @app.get("/api/gemini/models")
-async def get_gemini_models_endpoint(api_key: Optional[str] = Query(default=None)):
+async def get_gemini_models_endpoint(
+    api_key: Optional[str] = Query(default=None),
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key")
+):
     """Returns the list of Gemini models available for generateContent."""
-    key = api_key.strip() if api_key and api_key.strip() else get_gemini_key()
+    key = (api_key or x_gemini_key or "").strip() or get_gemini_key()
     models = await list_available_models(key)
     return {"models": models}
 
 @app.post("/api/gemini/validate")
-async def validate_gemini_key_endpoint(payload: Optional[GeminiValidateRequest] = None):
+async def validate_gemini_key_endpoint(
+    payload: Optional[GeminiValidateRequest] = None,
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key")
+):
     """Tests if a Gemini API key is valid and checks model compatibility."""
     key = None
     model = None
@@ -286,16 +294,21 @@ async def validate_gemini_key_endpoint(payload: Optional[GeminiValidateRequest] 
             key = payload.api_key.strip()
         if payload.chosen_model and payload.chosen_model.strip():
             model = payload.chosen_model.strip()
+    if not key and x_gemini_key and x_gemini_key.strip():
+        key = x_gemini_key.strip()
     if not key:
         key = get_gemini_key()
     if not key:
-        return {"valid": False, "error": "Nenhuma chave Gemini fornecida ou configurada."}
+        return {"valid": False, "error": "Nenhuma chave Gemini fornecida ou configurada neste dispositivo."}
 
     result = await validate_gemini_key(key, chosen_model=model)
     return result
 
 @app.get("/api/ai/coach")
-async def get_ai_coaching_analysis(force_refresh: bool = Query(default=False)):
+async def get_ai_coaching_analysis(
+    force_refresh: bool = Query(default=False),
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key")
+):
     """Returns AI Coach Diagnosis (cached or freshly generated)."""
     activities = get_activities(limit=None, act_type=None)
     if not activities:
@@ -311,14 +324,17 @@ async def get_ai_coaching_analysis(force_refresh: bool = Query(default=False)):
         activities=activities,
         settings=settings,
         analytics=analytics_result,
-        force_refresh=force_refresh
+        force_refresh=force_refresh,
+        api_key=x_gemini_key
     )
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Erro ao gerar diagnóstico IA."))
     return res
 
 @app.post("/api/ai/coach/refresh")
-async def refresh_ai_coaching_analysis():
+async def refresh_ai_coaching_analysis(
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key")
+):
     """Forces generation of a brand new AI Coach Diagnosis."""
     activities = get_activities(limit=None, act_type=None)
     if not activities:
@@ -334,14 +350,19 @@ async def refresh_ai_coaching_analysis():
         activities=activities,
         settings=settings,
         analytics=analytics_result,
-        force_refresh=True
+        force_refresh=True,
+        api_key=x_gemini_key
     )
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Erro ao gerar diagnóstico IA."))
     return res
 
 @app.get("/api/ai/activity/{strava_id}")
-async def get_single_activity_ai_analysis(strava_id: str, force_refresh: bool = Query(default=False)):
+async def get_single_activity_ai_analysis(
+    strava_id: str, 
+    force_refresh: bool = Query(default=False),
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key")
+):
     """Returns AI debrief for a specific running session."""
     activities = get_activities(limit=None, act_type=None)
     act = next((a for a in activities if str(a.get("strava_id") or a.get("id")) == str(strava_id)), None)
@@ -349,7 +370,12 @@ async def get_single_activity_ai_analysis(strava_id: str, force_refresh: bool = 
         raise HTTPException(status_code=404, detail="Atividade não encontrada.")
 
     settings = get_athlete_settings()
-    res = await generate_single_activity_analysis(activity=act, settings=settings)
+    res = await generate_single_activity_analysis(
+        activity=act, 
+        settings=settings, 
+        force_refresh=force_refresh,
+        api_key=x_gemini_key
+    )
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Erro ao analisar atividade."))
     return res
