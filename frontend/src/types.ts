@@ -16,6 +16,8 @@ export interface Activity {
   max_heartrate?: number | null;
   suffer_score?: number | null;
   source: string;
+  summary_polyline?: string | null;
+  raw_data?: any;
 }
 
 export interface HrZoneInfo {

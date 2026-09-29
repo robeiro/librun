@@ -201,7 +201,20 @@ def get_activities(limit: Optional[int] = None, act_type: Optional[str] = "Run")
             )
     rows = cursor.fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    
+    result = []
+    for r in rows:
+        item = dict(r)
+        poly = None
+        if item.get("raw_data"):
+            try:
+                rd = json.loads(item["raw_data"])
+                poly = rd.get("map", {}).get("summary_polyline")
+            except Exception:
+                pass
+        item["summary_polyline"] = poly
+        result.append(item)
+    return result
 
 def clear_all_activities():
     conn = get_connection()
