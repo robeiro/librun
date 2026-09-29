@@ -75,7 +75,7 @@ def update_settings(payload: AthleteSettingsUpdate):
 
 @app.get("/api/activities")
 def list_activities(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: Optional[int] = Query(default=None),
     type: Optional[str] = Query(default=None)
 ):
     acts = get_activities(limit=limit, act_type=type)
@@ -145,7 +145,7 @@ def delete_sample_activities_endpoint():
 @app.get("/api/analytics")
 def get_analytics():
     """Returns complete personalized running analytics, ACWR, 80/20 zones, and coach advice."""
-    activities = get_activities(limit=500, act_type=None)
+    activities = get_activities(limit=None, act_type=None)
     settings = get_athlete_settings()
     analytics_result = compute_full_analytics(activities, settings)
     return analytics_result
@@ -164,7 +164,7 @@ class StravaExchangeRequest(BaseModel):
     code: str
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
-    sync_count: Optional[int] = 50
+    sync_count: Optional[int] = 0
 
 @app.post("/api/strava/callback")
 async def exchange_token(payload: StravaExchangeRequest):
@@ -177,9 +177,9 @@ async def exchange_token(payload: StravaExchangeRequest):
         # Clear sample activities so athlete only sees their real runs
         clear_sample_activities()
 
-        # Automatically trigger sync with requested count
+        # Automatically trigger sync with requested count (0 = todas)
         try:
-            sync_res = await sync_strava_activities(count=payload.sync_count or 50)
+            sync_res = await sync_strava_activities(count=payload.sync_count if payload.sync_count is not None else 0)
             res["sync"] = sync_res
         except Exception as sync_err:
             res["sync_error"] = str(sync_err)
@@ -189,14 +189,14 @@ async def exchange_token(payload: StravaExchangeRequest):
         raise HTTPException(status_code=400, detail=f"Erro na autorização do Strava: {str(e)}")
 
 class StravaSyncRequest(BaseModel):
-    count: Optional[int] = 50
+    count: Optional[int] = 0
 
 @app.post("/api/strava/sync")
 async def sync_activities(
     payload: Optional[StravaSyncRequest] = None,
     count: Optional[int] = Query(default=None)
 ):
-    target_count = 50
+    target_count = 0
     if payload and payload.count is not None:
         target_count = payload.count
     elif count is not None:

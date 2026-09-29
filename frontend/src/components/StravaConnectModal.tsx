@@ -27,9 +27,9 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
   const [syncLimit, setSyncLimit] = useState<number>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("librun_sync_limit");
-      if (saved) return Number(saved);
+      if (saved !== null) return Number(saved);
     }
-    return 30;
+    return 0; // 0 = Todas as corridas por padrão
   });
 
   if (!isOpen) return null;
@@ -110,7 +110,11 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
   const handleSyncStrava = async () => {
     setIsSyncing(true);
     setErrorMsg(null);
-    setUploadStatus(`Conectando ao Strava e baixando suas ${syncLimit === 500 ? "todas as" : syncLimit} corridas mais recentes...`);
+    setUploadStatus(
+      syncLimit === 0
+        ? "Conectando ao Strava e baixando todo o seu histórico de corridas..."
+        : `Conectando ao Strava e baixando as ${syncLimit} corridas mais recentes...`
+    );
 
     try {
       localStorage.setItem("librun_sync_limit", String(syncLimit));
@@ -123,7 +127,7 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
       if (!res.ok) {
         throw new Error(data.detail || "Falha na sincronização.");
       }
-      setUploadStatus(`Sincronização concluída! ${data.runs_synced} corridas atualizadas.`);
+      setUploadStatus(`Sincronização concluída! ${data.runs_synced} corridas sincronizadas.`);
       onRefreshData();
     } catch (err: unknown) {
       setErrorMsg((err as Error).message);
@@ -241,11 +245,11 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                     Quantas corridas sincronizar?
                   </label>
                   <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                    {syncLimit === 500 ? "Todas as corridas" : `${syncLimit} corridas`}
+                    {syncLimit === 0 ? "Todas as corridas (sem limite)" : `${syncLimit} corridas`}
                   </span>
                 </div>
                 <div className="grid grid-cols-6 gap-1.5 text-center">
-                  {[10, 30, 50, 100, 200, 500].map((num) => (
+                  {[0, 50, 100, 200, 500, 1000].map((num) => (
                     <button
                       key={num}
                       type="button"
@@ -256,12 +260,12 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                           : "bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700"
                       }`}
                     >
-                      {num === 500 ? "Todas" : num}
+                      {num === 0 ? "Todas" : num}
                     </button>
                   ))}
                 </div>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-                  {syncLimit === 500 ? "Importa todo o histórico disponível no Strava." : `Importa as ${syncLimit} atividades de corrida mais recentes.`}
+                  {syncLimit === 0 ? "Importa todo o histórico disponível no Strava sem limite." : `Importa até ${syncLimit} atividades de corrida mais recentes.`}
                 </p>
               </div>
             </div>

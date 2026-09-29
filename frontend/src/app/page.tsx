@@ -75,7 +75,7 @@ export default function Home() {
       }
 
       // 3. Fetch activities
-      const actRes = await fetch("/api/activities?limit=150");
+      const actRes = await fetch("/api/activities");
       if (actRes.ok) {
         const actsData = await actRes.json();
         setActivities(actsData.activities || []);
@@ -99,16 +99,22 @@ export default function Home() {
         setIsLoading(true);
         showToast("Conectando ao Strava e sincronizando suas corridas...");
         try {
+          const savedLimit = typeof window !== "undefined" ? localStorage.getItem("librun_sync_limit") : null;
+          const syncCount = savedLimit !== null ? parseInt(savedLimit, 10) : 0;
           const exRes = await fetch("/api/strava/callback", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               code: code,
+              sync_count: syncCount,
             }),
           });
           const exData = await exRes.json();
           if (exRes.ok) {
-            showToast("Conta do Strava conectada com sucesso! Suas corridas foram importadas.");
+            const countMsg = exData.sync?.runs_synced 
+              ? `${exData.sync.runs_synced} corridas importadas!` 
+              : "Suas corridas foram importadas.";
+            showToast(`Conta do Strava conectada com sucesso! ${countMsg}`);
           } else {
             showToast(`Erro na autorização: ${exData.detail || "Verifique credenciais"}`);
           }

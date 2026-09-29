@@ -175,19 +175,30 @@ def upsert_activity(act: Dict[str, Any]) -> bool:
     conn.close()
     return True
 
-def get_activities(limit: int = 200, act_type: Optional[str] = "Run") -> List[Dict[str, Any]]:
+def get_activities(limit: Optional[int] = None, act_type: Optional[str] = "Run") -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
-    if act_type:
-        cursor.execute(
-            "SELECT * FROM activities WHERE type LIKE ? ORDER BY start_date DESC LIMIT ?",
-            (f"%{act_type}%", limit)
-        )
+    if limit and limit > 0:
+        if act_type:
+            cursor.execute(
+                "SELECT * FROM activities WHERE type LIKE ? ORDER BY start_date DESC LIMIT ?",
+                (f"%{act_type}%", limit)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM activities ORDER BY start_date DESC LIMIT ?",
+                (limit,)
+            )
     else:
-        cursor.execute(
-            "SELECT * FROM activities ORDER BY start_date DESC LIMIT ?",
-            (limit,)
-        )
+        if act_type:
+            cursor.execute(
+                "SELECT * FROM activities WHERE type LIKE ? ORDER BY start_date DESC",
+                (f"%{act_type}%",)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM activities ORDER BY start_date DESC"
+            )
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]

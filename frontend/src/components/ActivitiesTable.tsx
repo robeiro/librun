@@ -11,6 +11,7 @@ interface ActivitiesTableProps {
 
 export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, onCompare }) => {
   const [searchTerm, setSearchTerm] = useState("");
+  const [visibleCount, setVisibleCount] = useState<number>(50);
 
   const formatSeconds = (sec: number) => {
     const h = Math.floor(sec / 3600);
@@ -47,13 +48,15 @@ export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, on
     }
   };
 
-  const filtered = activities.filter((a) =>
-    a.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = activities.filter((a) => {
+    const term = searchTerm.toLowerCase();
+    const dStr = formatDate(a.start_date || a.start_date_local || "");
+    return a.name.toLowerCase().includes(term) || dStr.includes(term);
+  });
 
   return (
-    <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+    <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
             Histórico de Atividades do Strava
@@ -67,7 +70,7 @@ export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, on
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar atividade..."
+            placeholder="Buscar por nome ou data..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-emerald-500 transition"
@@ -92,7 +95,7 @@ export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, on
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-            {filtered.slice(0, 50).map((act) => {
+            {filtered.slice(0, visibleCount).map((act) => {
               const km = (act.distance / 1000).toFixed(2);
               const pace = formatPace(act.distance, act.moving_time);
               return (
@@ -158,6 +161,28 @@ export const ActivitiesTable: React.FC<ActivitiesTableProps> = ({ activities, on
           </tbody>
         </table>
       </div>
+
+      {filtered.length > visibleCount && (
+        <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800/80 text-xs text-slate-500">
+          <span>
+            Exibindo <strong>{visibleCount}</strong> de <strong>{filtered.length}</strong> corridas
+          </span>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setVisibleCount((prev) => prev + 50)}
+              className="px-3.5 py-1.5 rounded-xl font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition"
+            >
+              + Carregar mais 50
+            </button>
+            <button
+              onClick={() => setVisibleCount(filtered.length)}
+              className="px-3.5 py-1.5 rounded-xl font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500 hover:text-slate-950 border border-emerald-500/30 transition"
+            >
+              Mostrar todas ({filtered.length})
+            </button>
+          </div>
+        </div>
+      )}
 
       {filtered.length === 0 && (
         <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">

@@ -99,8 +99,12 @@ async def get_valid_access_token() -> Optional[str]:
 
     return access_token
 
-async def sync_strava_activities(count: int = 50, per_page: int = 50) -> Dict[str, Any]:
-    """Syncs activities directly from Strava API v3 up to the requested run count."""
+async def sync_strava_activities(count: int = 0, per_page: int = 200) -> Dict[str, Any]:
+    """
+    Syncs activities directly from Strava API v3.
+    If count <= 0, fetches ALL activities available on the Strava account.
+    If count > 0, fetches until at least `count` running activities are retrieved.
+    """
     token = await get_valid_access_token()
     if not token:
         raise ValueError("Strava não está conectado ou credenciais expiraram. Conecte sua conta primeiro.")
@@ -108,25 +112,39 @@ async def sync_strava_activities(count: int = 50, per_page: int = 50) -> Dict[st
     headers = {"Authorization": f"Bearer {token}"}
     synced_count = 0
     runs_count = 0
-    target_count = max(1, count)
-    page_size = min(max(5, target_count), 100)
+    target_all = (count <= 0)
+    target_count = 999999 if target_all else count
+    
+    # Strava API allows up to 200 items per page
+    page_size = 200 if target_all else min(max(30, count), 200)
     page = 1
+    max_pages = 100  # Allows up to 20,000 activities
 
     async with httpx.AsyncClient() as client:
-        while runs_count < target_count:
+        while runs_count < target_count and page <= max_pages:
             url = f"{STRAVA_API_BASE}/athlete/activities?page={page}&per_page={page_size}"
-            res = await client.get(url, headers=headers, timeout=25.0)
-            if res.status_code != 200:
+            try:
+                res = await client.get(url, headers=headers, timeout=35.0)
+            except Exception as req_err:
+                print(f"[Strava Sync] Erro de rede na página {page}: {req_err}")
                 break
+
+            if res.status_code == 429:
+                print("[Strava Sync] Limite de requisições da API do Strava atingido (429).")
+                break
+            if res.status_code != 200:
+                print(f"[Strava Sync] Código de status inesperado {res.status_code}: {res.text[:200]}")
+                break
+
             activities = res.json()
-            if not activities or not isinstance(activities, list):
+            if not activities or not isinstance(activities, list) or len(activities) == 0:
+                # Reached the end of athlete's history
                 break
 
             for act in activities:
-                act_type = act.get("type") or act.get("sport_type") or "Run"
+                act_type = act.get("sport_type") or act.get("type") or "Run"
                 is_run = "run" in act_type.lower() or act_type in ["Run", "TrailRun", "VirtualRun"]
 
-                # We save all activities or prioritize runs
                 upsert_activity({
                     "strava_id": str(act.get("id")),
                     "name": act.get("name", "Corrida Strava"),
@@ -149,18 +167,21 @@ async def sync_strava_activities(count: int = 50, per_page: int = 50) -> Dict[st
                 synced_count += 1
                 if is_run:
                     runs_count += 1
-                    if runs_count >= target_count:
+                    if not target_all and runs_count >= target_count:
                         break
 
+            # If Strava returned fewer items than requested, we reached the very last page!
             if len(activities) < page_size:
                 break
+
             page += 1
-            if page > 10:  # safety limit
-                break
+            # Brief pause to respect Strava rate limiter smoothly
+            time.sleep(0.15)
 
     return {
         "success": True,
         "total_synced": synced_count,
         "runs_synced": runs_count,
-        "requested_count": target_count
+        "requested_count": "todas" if target_all else target_count,
+        "pages_fetched": page
     }
