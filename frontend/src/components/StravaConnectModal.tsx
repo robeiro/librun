@@ -113,7 +113,7 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
       }
 
       // 2. Obter URL de autorização do Strava
-      const redirectUri = window.location.origin + "/";
+      const redirectUri = window.location.origin;
       const res = await fetch("/api/strava/auth-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

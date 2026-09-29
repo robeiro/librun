@@ -1,4 +1,5 @@
 import time
+import urllib.parse
 from typing import Dict, Any, List, Optional
 import httpx
 from database import get_athlete_settings, save_athlete_settings, upsert_activity
@@ -8,15 +9,14 @@ STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_API_BASE = "https://www.strava.com/api/v3"
 
 def get_strava_auth_url(client_id: str, redirect_uri: str) -> str:
-    scope = "read,activity:read_all"
-    return (
-        f"{STRAVA_AUTH_BASE}?"
-        f"client_id={client_id}&"
-        f"redirect_uri={redirect_uri}&"
-        f"response_type=code&"
-        f"approval_prompt=auto&"
-        f"scope={scope}"
-    )
+    params = {
+        "client_id": str(client_id).strip(),
+        "redirect_uri": redirect_uri.strip().rstrip("/"),
+        "response_type": "code",
+        "approval_prompt": "auto",
+        "scope": "read,activity:read_all",
+    }
+    return f"{STRAVA_AUTH_BASE}?{urllib.parse.urlencode(params)}"
 
 async def exchange_strava_code(client_id: Optional[str], client_secret: Optional[str], code: str) -> Dict[str, Any]:
     """Exchanges an authorization code for Strava access & refresh tokens."""
