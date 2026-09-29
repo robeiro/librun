@@ -121,6 +121,7 @@ export interface AnalyticsData {
 
 export interface AthleteSettings {
   id?: number;
+  athlete_id?: string | number;
   athlete_name: string;
   max_hr: number;
   rest_hr: number;

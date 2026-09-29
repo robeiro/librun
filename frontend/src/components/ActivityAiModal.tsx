@@ -45,10 +45,14 @@ export const ActivityAiModal: React.FC<ActivityAiModalProps> = ({
       const id = String(activity.strava_id || activity.id);
       const url = `/api/ai/activity/${id}${refresh ? "?force_refresh=true" : ""}`;
       const localKey = typeof window !== "undefined" ? localStorage.getItem("librun_gemini_api_key") : null;
+      const localModel = typeof window !== "undefined" ? localStorage.getItem("librun_gemini_model") : null;
+      const localAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
       const headers: Record<string, string> = {};
-      if (localKey) {
-        headers["X-Gemini-Key"] = localKey;
-      }
+      if (localKey) headers["X-Gemini-Key"] = localKey;
+      if (localModel) headers["X-Gemini-Model"] = localModel;
+      else if (athlete?.gemini_model) headers["X-Gemini-Model"] = athlete.gemini_model;
+      if (localAthleteId) headers["X-Athlete-Id"] = localAthleteId;
+      else if (athlete?.athlete_id) headers["X-Athlete-Id"] = String(athlete.athlete_id);
       const res = await fetch(url, { headers });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -61,7 +65,7 @@ export const ActivityAiModal: React.FC<ActivityAiModalProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [activity]);
+  }, [activity, athlete?.athlete_id, athlete?.gemini_model]);
 
   useEffect(() => {
     if (!isOpen || !activity) {

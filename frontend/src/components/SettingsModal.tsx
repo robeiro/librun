@@ -24,15 +24,10 @@ import { AthleteSettings, GeminiModelOption } from "../types";
 import { useTheme } from "../context/ThemeContext";
 
 const DEFAULT_GEMINI_MODELS: GeminiModelOption[] = [
-  { id: "gemini-flash-lite-latest", displayName: "Gemini Flash-Lite Latest (Mais Rápido & Estável - Recomendado)" },
-  { id: "gemini-3.5-flash", displayName: "Gemini 3.5 Flash" },
-  { id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash" },
-  { id: "gemini-flash-latest", displayName: "Gemini Flash Latest" },
-  { id: "gemini-3.5-flash-lite", displayName: "Gemini 3.5 Flash-Lite" },
-  { id: "gemini-3-flash-preview", displayName: "Gemini 3 Flash Preview" },
-  { id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro (Avançado)" },
-  { id: "gemini-2.0-flash", displayName: "Gemini 2.0 Flash" },
-  { id: "gemini-1.5-flash", displayName: "Gemini 1.5 Flash (Legado)" },
+  { id: "gemini-1.5-flash", displayName: "Gemini 1.5 Flash (Mais Rápido & Estável - Recomendado)" },
+  { id: "gemini-2.0-flash", displayName: "Gemini 2.0 Flash (Mais Recente & Inteligente)" },
+  { id: "gemini-1.5-pro", displayName: "Gemini 1.5 Pro (Raciocínio Avançado)" },
+  { id: "gemini-2.0-flash-lite", displayName: "Gemini 2.0 Flash-Lite (Super Rápido)" },
 ];
 
 interface SettingsModalProps {
@@ -62,9 +57,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     return "";
   });
-  const [geminiModel, setGeminiModel] = useState<string>(
-    athlete?.gemini_model || "gemini-flash-lite-latest"
-  );
+  const [geminiModel, setGeminiModel] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("librun_gemini_model");
+      if (saved) return saved;
+    }
+    return athlete?.gemini_model || "gemini-1.5-flash";
+  });
   const [availableModels, setAvailableModels] = useState<GeminiModelOption[]>(DEFAULT_GEMINI_MODELS);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelStatusMsg, setModelStatusMsg] = useState<string | null>(null);
@@ -75,6 +74,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [confirmClear, setConfirmClear] = useState(false);
 
   React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("librun_gemini_model");
+      if (saved) {
+        setGeminiModel(saved);
+        return;
+      }
+    }
     if (athlete?.gemini_model) {
       setGeminiModel(athlete.gemini_model);
     }
@@ -139,12 +145,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     e.preventDefault();
     setIsSaving(true);
     try {
-      // Save Gemini key strictly to client LocalStorage (never to server database)
+      // Save Gemini key & model strictly to client LocalStorage (never to server database)
       if (typeof window !== "undefined") {
         if (geminiKey.trim()) {
           localStorage.setItem("librun_gemini_api_key", geminiKey.trim());
         } else {
           localStorage.removeItem("librun_gemini_api_key");
+        }
+        if (geminiModel) {
+          localStorage.setItem("librun_gemini_model", geminiModel);
         }
       }
 

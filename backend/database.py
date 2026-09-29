@@ -32,7 +32,7 @@ def init_db():
         target_distance TEXT DEFAULT '10k',
         target_time_minutes REAL DEFAULT 50.0,
         gemini_api_key TEXT,
-        gemini_model TEXT DEFAULT 'gemini-flash-lite-latest',
+        gemini_model TEXT DEFAULT 'gemini-1.5-flash',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -43,21 +43,25 @@ def init_db():
     if "gemini_api_key" not in settings_cols:
         cursor.execute("ALTER TABLE athlete_settings ADD COLUMN gemini_api_key TEXT")
     if "gemini_model" not in settings_cols:
-        cursor.execute("ALTER TABLE athlete_settings ADD COLUMN gemini_model TEXT DEFAULT 'gemini-flash-lite-latest'")
+        cursor.execute("ALTER TABLE athlete_settings ADD COLUMN gemini_model TEXT DEFAULT 'gemini-1.5-flash'")
 
     # Default settings row if not present
     cursor.execute("""
     INSERT OR IGNORE INTO athlete_settings (id, athlete_name, max_hr, rest_hr, target_distance, target_time_minutes, gemini_model)
-    VALUES (1, 'Corredor', 190, 55, '10k', 50.0, 'gemini-flash-lite-latest')
+    VALUES (1, 'Corredor', 190, 55, '10k', 50.0, 'gemini-1.5-flash')
     """)
 
     # Privacy & Local-first security:
-    # Ensure sensitive personal keys are never stored on the server database
+    # Ensure sensitive personal keys and tokens are never stored on the server database
     cursor.execute("""
     UPDATE athlete_settings 
     SET strava_client_id = NULL,
         strava_client_secret = NULL,
-        gemini_api_key = NULL
+        strava_access_token = NULL,
+        strava_refresh_token = NULL,
+        strava_token_expires_at = NULL,
+        gemini_api_key = NULL,
+        athlete_id = NULL
     WHERE id = 1
     """)
     conn.commit()
@@ -90,6 +94,11 @@ def init_db():
     )
     """)
 
+    cursor.execute("PRAGMA table_info(activities)")
+    act_cols = [col[1] for col in cursor.fetchall()]
+    if "athlete_id" not in act_cols:
+        cursor.execute("ALTER TABLE activities ADD COLUMN athlete_id TEXT")
+
     # AI Analyses Table (cache analyses to save quota and speed up access)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS ai_analyses (
@@ -105,6 +114,7 @@ def init_db():
     # Indices for speed
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_start_date ON activities (start_date DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_type ON activities (type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_athlete_id ON activities (athlete_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analyses_type_target ON ai_analyses (analysis_type, target_id)")
 
     conn.commit()
@@ -116,12 +126,16 @@ def save_athlete_settings(settings: Dict[str, Any]):
     fields = []
     values = []
     for k, v in settings.items():
-        if k in ["gemini_api_key", "strava_client_secret"]:
-            continue  # Do not persist personal API keys or client secrets to server DB
-        if k in ["strava_client_id", "strava_access_token",
-                 "strava_refresh_token", "strava_token_expires_at", "athlete_id",
-                 "athlete_name", "max_hr", "rest_hr", "target_distance", "target_time_minutes",
-                 "gemini_model"]:
+        if k in [
+            "gemini_api_key", 
+            "strava_client_secret", 
+            "strava_client_id", 
+            "strava_access_token", 
+            "strava_refresh_token", 
+            "strava_token_expires_at"
+        ]:
+            continue  # Do not persist personal API keys or client tokens to server DB
+        if k in ["athlete_id", "athlete_name", "max_hr", "rest_hr", "target_distance", "target_time_minutes", "gemini_model"]:
             fields.append(f"{k} = ?")
             values.append(v)
     
@@ -132,7 +146,7 @@ def save_athlete_settings(settings: Dict[str, Any]):
         conn.commit()
     conn.close()
 
-def get_athlete_settings() -> Dict[str, Any]:
+def get_athlete_settings(athlete_id: Optional[str] = None) -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM athlete_settings WHERE id = 1")
@@ -140,10 +154,18 @@ def get_athlete_settings() -> Dict[str, Any]:
     conn.close()
     if row:
         res = dict(row)
-        if not res.get("gemini_model"):
+        res["strava_client_id"] = None
+        res["strava_client_secret"] = None
+        res["strava_access_token"] = None
+        res["strava_refresh_token"] = None
+        res["strava_token_expires_at"] = None
+        res["gemini_api_key"] = None
+        res["athlete_id"] = athlete_id if athlete_id else None
+        if not res.get("gemini_model") or res.get("gemini_model") == "gemini-flash-lite-latest":
             res["gemini_model"] = "gemini-1.5-flash"
         return res
     return {
+        "athlete_id": athlete_id if athlete_id else None,
         "athlete_name": "Corredor",
         "max_hr": 190,
         "rest_hr": 55,
@@ -183,7 +205,7 @@ def get_latest_ai_analysis(analysis_type: str, target_id: Optional[str] = None) 
         return dict(row)
     return None
 
-def upsert_activity(act: Dict[str, Any]) -> bool:
+def upsert_activity(act: Dict[str, Any], athlete_id: Optional[str] = None) -> bool:
     """Inserts or updates an activity. Returns True if inserted, False if updated."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -210,6 +232,17 @@ def upsert_activity(act: Dict[str, Any]) -> bool:
     source = act.get("source", "strava_api")
     raw_data = json.dumps(act.get("raw_data") or {}) if isinstance(act.get("raw_data"), dict) else None
 
+    # Determine athlete_id
+    act_athlete_id = None
+    if athlete_id:
+        act_athlete_id = str(athlete_id)
+    elif act.get("athlete_id"):
+        act_athlete_id = str(act.get("athlete_id"))
+    elif isinstance(act.get("athlete"), dict) and act.get("athlete", {}).get("id"):
+        act_athlete_id = str(act["athlete"]["id"])
+    elif source == "sample":
+        act_athlete_id = "sample"
+
     # Handle strava cadence: Strava returns SPM for runs, or revs for cycling. For runs it is usually SPM (steps per min)
     # If cadence is reported as 80-95 (steps per leg), double it to 160-190 spm
     if average_cadence is not None and 60 <= average_cadence <= 110:
@@ -217,11 +250,12 @@ def upsert_activity(act: Dict[str, Any]) -> bool:
 
     cursor.execute("""
     INSERT INTO activities (
-        strava_id, name, type, distance, moving_time, elapsed_time,
+        strava_id, athlete_id, name, type, distance, moving_time, elapsed_time,
         total_elevation_gain, start_date, start_date_local, average_speed, max_speed,
         average_cadence, average_heartrate, max_heartrate, suffer_score, source, raw_data
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(strava_id) DO UPDATE SET
+        athlete_id = COALESCE(excluded.athlete_id, activities.athlete_id),
         name = excluded.name,
         type = excluded.type,
         distance = excluded.distance,
@@ -239,7 +273,7 @@ def upsert_activity(act: Dict[str, Any]) -> bool:
         source = excluded.source,
         raw_data = excluded.raw_data
     """, (
-        strava_id, name, act_type, distance, moving_time, elapsed_time,
+        strava_id, act_athlete_id, name, act_type, distance, moving_time, elapsed_time,
         total_elevation_gain, start_date, start_date_local, average_speed, max_speed,
         average_cadence, average_heartrate, max_heartrate, suffer_score, source, raw_data
     ))
@@ -247,31 +281,44 @@ def upsert_activity(act: Dict[str, Any]) -> bool:
     conn.close()
     return True
 
-def get_activities(limit: Optional[int] = None, act_type: Optional[str] = "Run") -> List[Dict[str, Any]]:
+def get_activities(limit: Optional[int] = None, act_type: Optional[str] = "Run", athlete_id: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
-    if limit and limit > 0:
-        if act_type:
-            cursor.execute(
-                "SELECT * FROM activities WHERE type LIKE ? ORDER BY start_date DESC LIMIT ?",
-                (f"%{act_type}%", limit)
-            )
-        else:
-            cursor.execute(
-                "SELECT * FROM activities ORDER BY start_date DESC LIMIT ?",
-                (limit,)
-            )
+    
+    where_parts = []
+    params = []
+
+    if athlete_id and athlete_id != "sample":
+        where_parts.append("(athlete_id = ? OR (athlete_id IS NULL AND source != 'sample'))")
+        params.append(str(athlete_id))
     else:
-        if act_type:
-            cursor.execute(
-                "SELECT * FROM activities WHERE type LIKE ? ORDER BY start_date DESC",
-                (f"%{act_type}%",)
-            )
-        else:
-            cursor.execute(
-                "SELECT * FROM activities ORDER BY start_date DESC"
-            )
+        # Unauthenticated / anonymous visitor: show sample activities only
+        where_parts.append("(source = 'sample' OR athlete_id = 'sample')")
+
+    if act_type:
+        where_parts.append("type LIKE ?")
+        params.append(f"%{act_type}%")
+
+    query = f"SELECT * FROM activities WHERE {' AND '.join(where_parts)} ORDER BY start_date DESC"
+    if limit and limit > 0:
+        query += f" LIMIT {int(limit)}"
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
+
+    # Fallback to sample data if athlete has no synced activities yet
+    if not rows and athlete_id and athlete_id != "sample":
+        fallback_query = "SELECT * FROM activities WHERE source = 'sample'"
+        fallback_params = []
+        if act_type:
+            fallback_query += " AND type LIKE ?"
+            fallback_params.append(f"%{act_type}%")
+        fallback_query += " ORDER BY start_date DESC"
+        if limit and limit > 0:
+            fallback_query += f" LIMIT {int(limit)}"
+        cursor.execute(fallback_query, fallback_params)
+        rows = cursor.fetchall()
+
     conn.close()
     
     result = []
@@ -288,10 +335,13 @@ def get_activities(limit: Optional[int] = None, act_type: Optional[str] = "Run")
         result.append(item)
     return result
 
-def clear_all_activities():
+def clear_all_activities(athlete_id: Optional[str] = None):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM activities")
+    if athlete_id and athlete_id != "sample":
+        cursor.execute("DELETE FROM activities WHERE athlete_id = ?", (str(athlete_id),))
+    else:
+        cursor.execute("DELETE FROM activities")
     conn.commit()
     conn.close()
 

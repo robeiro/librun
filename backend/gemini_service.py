@@ -12,17 +12,12 @@ from database import (
 
 logger = logging.getLogger("librun.gemini")
 
-DEFAULT_MODEL = "gemini-flash-lite-latest"
+DEFAULT_MODEL = "gemini-1.5-flash"
 KNOWN_POPULAR_MODELS = [
-    {"id": "gemini-flash-lite-latest", "displayName": "Gemini Flash-Lite Latest (Mais Rápido & Alta Disponibilidade - Recomendado)", "description": "Menor latência, alta cota e excelente estabilidade."},
-    {"id": "gemini-3.5-flash", "displayName": "Gemini 3.5 Flash", "description": "Modelo avançado equilibrado."},
-    {"id": "gemini-3.8-flash", "displayName": "Gemini 3.8 Flash", "description": "Versão 3.8 Flash mais recente."},
-    {"id": "gemini-flash-latest", "displayName": "Gemini Flash Latest", "description": "Aponta para versão Flash mais recente."},
-    {"id": "gemini-3.5-flash-lite", "displayName": "Gemini 3.5 Flash Lite", "description": "Versão 3.5 Flash leve."},
-    {"id": "gemini-3-flash-preview", "displayName": "Gemini 3 Flash Preview", "description": "Preview da geração 3."},
-    {"id": "gemini-2.5-pro", "displayName": "Gemini 2.5 Pro (Raciocínio Profundo)", "description": "Maior capacidade analítica."},
-    {"id": "gemini-2.0-flash", "displayName": "Gemini 2.0 Flash", "description": "Versão 2.0 Flash."},
-    {"id": "gemini-1.5-flash", "displayName": "Gemini 1.5 Flash (Legado)", "description": "Versão 1.5 Flash legada."},
+    {"id": "gemini-1.5-flash", "displayName": "Gemini 1.5 Flash (Recomendado - Rápido & Cota Gratuita)", "description": "Menor latência, cota gratuita generosa e excelente estabilidade."},
+    {"id": "gemini-2.0-flash", "displayName": "Gemini 2.0 Flash (Nova Geração)", "description": "Velocidade máxima e inteligência aprimorada."},
+    {"id": "gemini-1.5-pro", "displayName": "Gemini 1.5 Pro (Avançado / Raciocínio Profundo)", "description": "Diagnóstico aprofundado e altamente detalhado."},
+    {"id": "gemini-2.0-flash-lite", "displayName": "Gemini 2.0 Flash Lite (Ultra Rápido)", "description": "Versão ultra leve de alta eficiência."},
 ]
 
 def get_gemini_key(override_key: Optional[str] = None) -> Optional[str]:
@@ -158,7 +153,7 @@ async def call_gemini(
     
     # Try the user's selected model first, then safe fallbacks
     models_to_try = [chosen_model]
-    for m in ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"]:
+    for m in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.0-flash-lite"]:
         if m not in models_to_try:
             models_to_try.append(m)
 
@@ -246,26 +241,29 @@ async def generate_global_coaching_analysis(
     settings: Dict[str, Any],
     analytics: Dict[str, Any],
     force_refresh: bool = False,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    athlete_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """Generates an in-depth AI coaching diagnosis of the athlete's overall fitness, 80/20 balance, ACWR, and next 14 days action plan."""
-    if not force_refresh:
-        cached = get_latest_ai_analysis("coach_global")
-        if cached:
-            return {
-                "success": True,
-                "analysis": cached["content"],
-                "created_at": cached["created_at"],
-                "cached": True,
-                "model_used": cached.get("model_used") or get_gemini_model()
-            }
-
     key = get_gemini_key(api_key)
     if not key:
         return {
             "success": False,
             "error": "Chave da API Gemini não configurada. Acesse Configurações para adicionar sua chave."
         }
+
+    cache_target = f"athlete_{athlete_id}" if athlete_id else "global_coach"
+    if not force_refresh:
+        cached = get_latest_ai_analysis("coach_global", target_id=cache_target)
+        if cached:
+            return {
+                "success": True,
+                "analysis": cached["content"],
+                "created_at": cached["created_at"],
+                "cached": True,
+                "model_used": cached.get("model_used") or model or get_gemini_model()
+            }
 
     # Extract summary metrics
     summary = analytics.get("summary", {})
@@ -364,23 +362,30 @@ Elabore uma análise completa, altamente técnica, encorajadora e estruturada em
 Escreva em português brasileiro de forma direta, motivadora, usando termos técnicos do atletismo de forma clara e visualmente agradável com emojis pontuais e formatação rica em Markdown.
 """
 
-    current_model = get_gemini_model()
-    analysis_text = await call_gemini(prompt, model=current_model)
-    save_ai_analysis(analysis_type="coach_global", content=analysis_text, model_used=current_model)
-
-    return {
-        "success": True,
-        "analysis": analysis_text,
-        "cached": False,
-        "created_at": "Agora",
-        "model_used": current_model
-    }
+    current_model = model or get_gemini_model()
+    try:
+        analysis_text = await call_gemini(prompt, api_key=key, model=current_model)
+        save_ai_analysis(analysis_type="coach_global", content=analysis_text, target_id=cache_target, model_used=current_model)
+        return {
+            "success": True,
+            "analysis": analysis_text,
+            "cached": False,
+            "created_at": "Agora",
+            "model_used": current_model
+        }
+    except Exception as e:
+        logger.error(f"Erro ao gerar diagnóstico do coach: {e}")
+        return {
+            "success": False,
+            "error": f"Erro na análise de IA: {str(e)}"
+        }
 
 async def generate_single_activity_analysis(
     activity: Dict[str, Any],
     settings: Dict[str, Any],
     force_refresh: bool = False,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    model: Optional[str] = None
 ) -> Dict[str, Any]:
     """Generates an AI deep dive / debrief for a specific running session."""
     strava_id = str(activity.get("strava_id") or activity.get("id"))
@@ -392,7 +397,7 @@ async def generate_single_activity_analysis(
                 "analysis": cached["content"],
                 "created_at": cached["created_at"],
                 "cached": True,
-                "model_used": cached.get("model_used") or get_gemini_model()
+                "model_used": cached.get("model_used") or model or get_gemini_model()
             }
 
     key = get_gemini_key(api_key)
@@ -445,14 +450,20 @@ Responda em Markdown estruturado, cobrindo:
 Escreva de forma elegante, precisa, em português brasileiro e com tópicos objetivos.
 """
 
-    current_model = get_gemini_model()
-    analysis_text = await call_gemini(prompt, model=current_model)
-    save_ai_analysis(analysis_type="activity", content=analysis_text, target_id=strava_id, model_used=current_model)
-
-    return {
-        "success": True,
-        "analysis": analysis_text,
-        "cached": False,
-        "created_at": "Agora",
-        "model_used": current_model
-    }
+    current_model = model or get_gemini_model()
+    try:
+        analysis_text = await call_gemini(prompt, api_key=key, model=current_model)
+        save_ai_analysis(analysis_type="activity", content=analysis_text, target_id=strava_id, model_used=current_model)
+        return {
+            "success": True,
+            "analysis": analysis_text,
+            "cached": False,
+            "created_at": "Agora",
+            "model_used": current_model
+        }
+    except Exception as e:
+        logger.error(f"Erro ao analisar corrida com IA: {e}")
+        return {
+            "success": False,
+            "error": f"Erro na análise de IA: {str(e)}"
+        }

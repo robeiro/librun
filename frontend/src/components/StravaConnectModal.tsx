@@ -53,6 +53,21 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
     return 0; // 0 = Todas as corridas por padrão
   });
 
+  const isConnected = typeof window !== "undefined" && Boolean(localStorage.getItem("librun_strava_access_token"));
+  const athleteName = (typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_name") : null) || athlete?.athlete_name;
+
+  const handleDisconnect = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("librun_strava_access_token");
+      localStorage.removeItem("librun_strava_refresh_token");
+      localStorage.removeItem("librun_strava_token_expires_at");
+      localStorage.removeItem("librun_strava_athlete_id");
+      localStorage.removeItem("librun_strava_athlete_name");
+    }
+    setUploadStatus("Conta Strava desconectada com sucesso deste navegador.");
+    onRefreshData();
+  };
+
   if (!isOpen) return null;
 
   // Handle direct file upload (CSV / ZIP / GPX)
@@ -149,19 +164,36 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
       localStorage.setItem("librun_sync_limit", String(syncLimit));
       const savedCid = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_id") : null;
       const savedCsec = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_secret") : null;
+      const savedToken = typeof window !== "undefined" ? localStorage.getItem("librun_strava_access_token") : null;
+      const savedRefreshToken = typeof window !== "undefined" ? localStorage.getItem("librun_strava_refresh_token") : null;
+      const savedExpiresAt = typeof window !== "undefined" ? localStorage.getItem("librun_strava_token_expires_at") : null;
+      const savedAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
 
       const res = await fetch("/api/strava/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(savedToken ? { "X-Strava-Token": savedToken } : {}),
+          ...(savedAthleteId ? { "X-Athlete-Id": savedAthleteId } : {})
+        },
         body: JSON.stringify({ 
           count: syncLimit,
           client_id: savedCid || undefined,
-          client_secret: savedCsec || undefined
+          client_secret: savedCsec || undefined,
+          access_token: savedToken || undefined,
+          refresh_token: savedRefreshToken || undefined,
+          token_expires_at: savedExpiresAt ? Number(savedExpiresAt) : undefined,
+          athlete_id: savedAthleteId || undefined
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.detail || "Falha na sincronização.");
+      }
+      if (data.new_tokens && typeof window !== "undefined") {
+        if (data.new_tokens.access_token) localStorage.setItem("librun_strava_access_token", data.new_tokens.access_token);
+        if (data.new_tokens.refresh_token) localStorage.setItem("librun_strava_refresh_token", data.new_tokens.refresh_token);
+        if (data.new_tokens.expires_at) localStorage.setItem("librun_strava_token_expires_at", String(data.new_tokens.expires_at));
       }
       setUploadStatus(`Sincronização concluída! ${data.runs_synced} corridas sincronizadas.`);
       onRefreshData();
@@ -280,8 +312,33 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
               )}
             </div>
 
+            {isConnected && (
+              <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between">
+                <div className="flex items-center space-x-2.5">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                      Strava Conectado neste dispositivo
+                    </div>
+                    {athleteName && (
+                      <div className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                        Atleta: <strong>{athleteName}</strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="px-2.5 py-1 text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/60 rounded-xl border border-rose-200 dark:border-rose-900/50 transition shadow-xs"
+                >
+                  Desconectar
+                </button>
+              </div>
+            )}
+
             <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/20 text-[10px] text-emerald-700 dark:text-emerald-300 leading-tight">
-              🔒 <strong>Privacidade Total (Armazenamento Local):</strong> O Client ID e o Client Secret são gravados apenas no seu navegador local (LocalStorage). Eles nunca são salvos publicamente no banco do servidor nem compartilhados entre aparelhos.
+              🔒 <strong>Privacidade Total (Armazenamento Local):</strong> O Client ID, Client Secret e Tokens OAuth são gravados apenas no seu navegador local (LocalStorage). Eles nunca são salvos publicamente no banco do servidor nem compartilhados entre aparelhos.
             </div>
 
             <div className="space-y-3 text-xs">
@@ -363,11 +420,11 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                 disabled={isSyncing}
                 className="flex-1 py-2.5 px-4 rounded-xl font-bold text-xs bg-[#FC5200] hover:bg-[#e04800] text-white flex items-center justify-center space-x-2 transition shadow-lg shadow-orange-500/20"
               >
-                <span>Autorizar com o Strava</span>
+                <span>{isConnected ? "Reautorizar com o Strava" : "Autorizar com o Strava"}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {athlete?.has_strava_token && (
+              {isConnected && (
                 <button
                   onClick={handleSyncStrava}
                   disabled={isSyncing}

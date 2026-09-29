@@ -71,22 +71,42 @@ export default function Home() {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
+      const savedAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
+      const headers: Record<string, string> = {};
+      if (savedAthleteId) {
+        headers["X-Athlete-Id"] = savedAthleteId;
+      }
+
       // 1. Fetch settings
-      const settingsRes = await fetch("/api/settings");
+      const settingsRes = await fetch("/api/settings", { headers });
       if (settingsRes.ok) {
         const sData = await settingsRes.json();
-        setAthlete(sData);
+        const hasLocalStrava = Boolean(
+          typeof window !== "undefined" && localStorage.getItem("librun_strava_access_token")
+        );
+        const localAthleteName = (typeof window !== "undefined" && localStorage.getItem("librun_strava_athlete_name")) || sData.athlete_name || "Corredor";
+        const localGeminiKeyConfigured = Boolean(
+          typeof window !== "undefined" && localStorage.getItem("librun_gemini_api_key")
+        );
+        const localGeminiModel = (typeof window !== "undefined" && localStorage.getItem("librun_gemini_model")) || sData.gemini_model || "gemini-1.5-flash";
+        setAthlete({
+          ...sData,
+          has_strava_token: hasLocalStrava,
+          athlete_name: localAthleteName,
+          gemini_api_key_configured: localGeminiKeyConfigured,
+          gemini_model: localGeminiModel,
+        });
       }
 
       // 2. Fetch analytics
-      const analyticsRes = await fetch("/api/analytics");
+      const analyticsRes = await fetch("/api/analytics", { headers });
       if (analyticsRes.ok) {
         const aData = await analyticsRes.json();
         setAnalytics(aData);
       }
 
       // 3. Fetch activities
-      const actRes = await fetch("/api/activities");
+      const actRes = await fetch("/api/activities", { headers });
       if (actRes.ok) {
         const actsData = await actRes.json();
         setActivities(actsData.activities || []);
@@ -135,6 +155,23 @@ export default function Home() {
           });
           const exData = await exRes.json();
           if (exRes.ok) {
+            if (typeof window !== "undefined") {
+              if (exData.access_token) {
+                localStorage.setItem("librun_strava_access_token", exData.access_token);
+              }
+              if (exData.refresh_token) {
+                localStorage.setItem("librun_strava_refresh_token", exData.refresh_token);
+              }
+              if (exData.expires_at) {
+                localStorage.setItem("librun_strava_token_expires_at", String(exData.expires_at));
+              }
+              if (exData.athlete_id) {
+                localStorage.setItem("librun_strava_athlete_id", String(exData.athlete_id));
+              }
+              if (exData.athlete_name) {
+                localStorage.setItem("librun_strava_athlete_name", exData.athlete_name);
+              }
+            }
             if (exData.sync_error) {
               showToast(`Strava conectado, mas houve erro ao importar corridas: ${exData.sync_error}`);
             } else {
@@ -178,9 +215,14 @@ export default function Home() {
   // Save athlete settings
   const handleSaveSettings = async (newSettings: Partial<AthleteSettings>) => {
     try {
+      const savedAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (savedAthleteId) {
+        headers["X-Athlete-Id"] = savedAthleteId;
+      }
       const res = await fetch("/api/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(newSettings),
       });
       if (res.ok) {
@@ -195,7 +237,12 @@ export default function Home() {
   // Clear data
   const handleClearData = async () => {
     try {
-      await fetch("/api/activities", { method: "DELETE" });
+      const savedAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
+      const headers: Record<string, string> = {};
+      if (savedAthleteId) {
+        headers["X-Athlete-Id"] = savedAthleteId;
+      }
+      await fetch("/api/activities", { method: "DELETE", headers });
       showToast("Todas as corridas foram apagadas.");
       fetchData();
     } catch (e) {

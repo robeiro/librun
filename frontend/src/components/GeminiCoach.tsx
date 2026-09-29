@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   Sparkles, 
   RefreshCw, 
@@ -34,17 +34,21 @@ export const GeminiCoach: React.FC<GeminiCoachProps> = ({
     athlete?.gemini_api_key_configured
   );
 
-  const fetchAnalysis = async (refresh: boolean = false) => {
+  const fetchAnalysis = useCallback(async (refresh: boolean = false) => {
     setIsLoading(true);
     setError(null);
     try {
       const url = refresh ? "/api/ai/coach/refresh" : "/api/ai/coach";
       const method = refresh ? "POST" : "GET";
       const localKey = typeof window !== "undefined" ? localStorage.getItem("librun_gemini_api_key") : null;
+      const localModel = typeof window !== "undefined" ? localStorage.getItem("librun_gemini_model") : null;
+      const localAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
       const headers: Record<string, string> = {};
-      if (localKey) {
-        headers["X-Gemini-Key"] = localKey;
-      }
+      if (localKey) headers["X-Gemini-Key"] = localKey;
+      if (localModel) headers["X-Gemini-Model"] = localModel;
+      else if (athlete?.gemini_model) headers["X-Gemini-Model"] = athlete.gemini_model;
+      if (localAthleteId) headers["X-Athlete-Id"] = localAthleteId;
+      else if (athlete?.athlete_id) headers["X-Athlete-Id"] = String(athlete.athlete_id);
       const res = await fetch(url, { method, headers });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -58,13 +62,13 @@ export const GeminiCoach: React.FC<GeminiCoachProps> = ({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [athlete?.gemini_model, athlete?.athlete_id]);
 
   useEffect(() => {
     if (isKeyConfigured) {
       fetchAnalysis(false);
     }
-  }, [isKeyConfigured]);
+  }, [isKeyConfigured, fetchAnalysis]);
 
   const handleCopy = () => {
     if (!analysis) return;
