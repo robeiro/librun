@@ -9,7 +9,6 @@ import {
   AlertCircle, 
   Clock, 
   CheckCircle2, 
-  Share2,
   Copy,
   Check
 } from "lucide-react";
@@ -151,11 +150,20 @@ export const GeminiCoach: React.FC<GeminiCoachProps> = ({
             <BrainCircuit className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-lg font-black text-slate-900 dark:text-slate-100 flex items-center space-x-2">
+            <h2 className="text-lg font-black text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
               <span>Diagnóstico com Inteligência Artificial</span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-gradient-to-r from-emerald-500/10 to-teal-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 font-extrabold uppercase">
                 Google Gemini
               </span>
+              {isKeyConfigured && (
+                <button
+                  onClick={onOpenSettings}
+                  title="Clique para alterar o modelo do Gemini"
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border border-cyan-500/20 font-mono hover:bg-cyan-500/20 transition cursor-pointer"
+                >
+                  {athlete?.gemini_model || "gemini-3.8-flash"}
+                </button>
+              )}
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Análise fisiológica avançada com base no método 80/20, índice ACWR e histórico de treinos.
@@ -250,12 +258,20 @@ export const GeminiCoach: React.FC<GeminiCoachProps> = ({
 
       {/* Error State */}
       {error && !isLoading && (
-        <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-500/30 flex items-start space-x-3 text-xs text-red-800 dark:text-red-300">
-          <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <span className="font-bold block">Aviso ao consultar o Gemini:</span>
-            <span>{error}</span>
+        <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-red-800 dark:text-red-300">
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-bold block">Aviso ao consultar o Gemini:</span>
+              <span className="whitespace-pre-line">{error}</span>
+            </div>
           </div>
+          <button
+            onClick={onOpenSettings}
+            className="shrink-0 px-3 py-1.5 rounded-xl bg-red-100 hover:bg-red-200 dark:bg-red-900/40 dark:hover:bg-red-900/60 text-red-700 dark:text-red-200 font-semibold text-xs border border-red-300 dark:border-red-700/50 transition self-start sm:self-center"
+          >
+            Ajustar Modelo nas Configurações
+          </button>
         </div>
       )}
 

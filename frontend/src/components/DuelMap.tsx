@@ -134,7 +134,6 @@ export const DuelMap: React.FC<DuelMapProps> = ({
   distBCovered,
   raceDistanceMeters,
   isDark,
-  isPlaying,
   formatActivityName,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);

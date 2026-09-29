@@ -23,7 +23,9 @@ from strava_auth import (
 )
 from gemini_service import (
     get_gemini_key,
+    get_gemini_model,
     validate_gemini_key,
+    list_available_models,
     generate_global_coaching_analysis,
     generate_single_activity_analysis,
 )
@@ -60,6 +62,7 @@ class AthleteSettingsUpdate(BaseModel):
     strava_client_id: Optional[str] = None
     strava_client_secret: Optional[str] = None
     gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
 
 @app.get("/api/settings")
 def get_settings():
@@ -88,6 +91,7 @@ def get_settings():
             masked["gemini_api_key_configured"] = False
             masked["gemini_api_key_masked"] = None
 
+    masked["gemini_model"] = settings.get("gemini_model") or "gemini-1.5-flash"
     masked["has_strava_token"] = bool(masked.get("strava_access_token"))
     return masked
 
@@ -240,19 +244,31 @@ async def sync_activities(
 
 class GeminiValidateRequest(BaseModel):
     api_key: Optional[str] = None
+    chosen_model: Optional[str] = None
+
+@app.get("/api/gemini/models")
+async def get_gemini_models_endpoint(api_key: Optional[str] = Query(default=None)):
+    """Returns the list of Gemini models available for generateContent."""
+    key = api_key.strip() if api_key and api_key.strip() else get_gemini_key()
+    models = await list_available_models(key)
+    return {"models": models}
 
 @app.post("/api/gemini/validate")
 async def validate_gemini_key_endpoint(payload: Optional[GeminiValidateRequest] = None):
-    """Tests if a Gemini API key is valid."""
+    """Tests if a Gemini API key is valid and checks model compatibility."""
     key = None
-    if payload and payload.api_key and payload.api_key.strip():
-        key = payload.api_key.strip()
+    model = None
+    if payload:
+        if payload.api_key and payload.api_key.strip():
+            key = payload.api_key.strip()
+        if payload.chosen_model and payload.chosen_model.strip():
+            model = payload.chosen_model.strip()
     if not key:
         key = get_gemini_key()
     if not key:
         return {"valid": False, "error": "Nenhuma chave Gemini fornecida ou configurada."}
 
-    result = await validate_gemini_key(key)
+    result = await validate_gemini_key(key, chosen_model=model)
     return result
 
 @app.get("/api/ai/coach")

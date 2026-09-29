@@ -1,14 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   X, 
   Sparkles, 
   BrainCircuit, 
   RefreshCw, 
-  Clock, 
-  Heart, 
-  Zap, 
   AlertCircle,
   Copy,
   Check
@@ -37,19 +34,7 @@ export const ActivityAiModal: React.FC<ActivityAiModalProps> = ({
 
   const isKeyConfigured = athlete?.gemini_api_key_configured;
 
-  useEffect(() => {
-    if (!isOpen || !activity) {
-      setAnalysis(null);
-      setError(null);
-      return;
-    }
-
-    if (isKeyConfigured) {
-      loadAnalysis(false);
-    }
-  }, [isOpen, activity, isKeyConfigured]);
-
-  const loadAnalysis = async (refresh: boolean = false) => {
+  const loadAnalysis = useCallback(async (refresh: boolean = false) => {
     if (!activity) return;
     setIsLoading(true);
     setError(null);
@@ -68,7 +53,19 @@ export const ActivityAiModal: React.FC<ActivityAiModalProps> = ({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [activity]);
+
+  useEffect(() => {
+    if (!isOpen || !activity) {
+      setAnalysis(null);
+      setError(null);
+      return;
+    }
+
+    if (isKeyConfigured) {
+      loadAnalysis(false);
+    }
+  }, [isOpen, activity, isKeyConfigured, loadAnalysis]);
 
   const handleCopy = () => {
     if (!analysis) return;

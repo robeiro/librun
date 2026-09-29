@@ -17,7 +17,7 @@ export interface Activity {
   suffer_score?: number | null;
   source: string;
   summary_polyline?: string | null;
-  raw_data?: any;
+  raw_data?: Record<string, unknown> | null;
 }
 
 export interface HrZoneInfo {
@@ -133,6 +133,13 @@ export interface AthleteSettings {
   gemini_api_key?: string;
   gemini_api_key_configured?: boolean;
   gemini_api_key_masked?: string;
+  gemini_model?: string;
+}
+
+export interface GeminiModelOption {
+  id: string;
+  displayName: string;
+  description?: string;
 }
 
 export interface AiAnalysisResponse {
@@ -140,5 +147,6 @@ export interface AiAnalysisResponse {
   analysis?: string;
   created_at?: string;
   cached?: boolean;
+  model_used?: string;
   error?: string;
 }

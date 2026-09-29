@@ -16,10 +16,24 @@ import {
   AlertCircle, 
   Eye, 
   EyeOff, 
-  ExternalLink 
+  ExternalLink,
+  Cpu,
+  RefreshCw
 } from "lucide-react";
-import { AthleteSettings } from "../types";
+import { AthleteSettings, GeminiModelOption } from "../types";
 import { useTheme } from "../context/ThemeContext";
+
+const DEFAULT_GEMINI_MODELS: GeminiModelOption[] = [
+  { id: "gemini-flash-lite-latest", displayName: "Gemini Flash-Lite Latest (Mais Rápido & Estável - Recomendado)" },
+  { id: "gemini-3.5-flash", displayName: "Gemini 3.5 Flash" },
+  { id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash" },
+  { id: "gemini-flash-latest", displayName: "Gemini Flash Latest" },
+  { id: "gemini-3.5-flash-lite", displayName: "Gemini 3.5 Flash-Lite" },
+  { id: "gemini-3-flash-preview", displayName: "Gemini 3 Flash Preview" },
+  { id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro (Avançado)" },
+  { id: "gemini-2.0-flash", displayName: "Gemini 2.0 Flash" },
+  { id: "gemini-1.5-flash", displayName: "Gemini 1.5 Flash (Legado)" },
+];
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -43,13 +57,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [targetDist, setTargetDist] = useState(athlete?.target_distance || "10k");
   const [targetTime, setTargetTime] = useState(athlete?.target_time_minutes || 50.0);
   const [geminiKey, setGeminiKey] = useState("");
+  const [geminiModel, setGeminiModel] = useState<string>(
+    athlete?.gemini_model || "gemini-flash-lite-latest"
+  );
+  const [availableModels, setAvailableModels] = useState<GeminiModelOption[]>(DEFAULT_GEMINI_MODELS);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelStatusMsg, setModelStatusMsg] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [testResult, setTestResult] = useState<{ valid?: boolean; message?: string; error?: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
+  React.useEffect(() => {
+    if (athlete?.gemini_model) {
+      setGeminiModel(athlete.gemini_model);
+    }
+  }, [athlete]);
+
   if (!isOpen) return null;
+
+  const fetchAvailableModels = async () => {
+    setIsLoadingModels(true);
+    setModelStatusMsg(null);
+    try {
+      const keyToUse = geminiKey.trim() || undefined;
+      const url = keyToUse
+        ? `/api/gemini/models?api_key=${encodeURIComponent(keyToUse)}`
+        : `/api/gemini/models`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (res.ok && data.models && data.models.length > 0) {
+        setAvailableModels(data.models);
+        setModelStatusMsg(`Carregados ${data.models.length} modelos compatíveis com sua chave.`);
+      }
+    } catch {
+      setModelStatusMsg("Não foi possível listar modelos adicionais.");
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
 
   const handleTestGeminiKey = async () => {
     setIsValidating(true);
@@ -58,10 +105,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const res = await fetch("/api/gemini/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: geminiKey.trim() || undefined }),
+        body: JSON.stringify({ 
+          api_key: geminiKey.trim() || undefined,
+          chosen_model: geminiModel,
+        }),
       });
       const data = await res.json();
       setTestResult(data);
+      if (data.available_models && data.available_models.length > 0) {
+        setAvailableModels(data.available_models);
+      }
     } catch {
       setTestResult({ valid: false, error: "Erro ao conectar ao servidor local." });
     } finally {
@@ -79,6 +132,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         rest_hr: Number(restHr),
         target_distance: targetDist,
         target_time_minutes: Number(targetTime),
+        gemini_model: geminiModel,
       };
       if (geminiKey.trim()) {
         payload.gemini_api_key = geminiKey.trim();
@@ -340,6 +394,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>{testResult.message || testResult.error}</span>
                 </div>
               )}
+
+              {/* Gemini Model Selector */}
+              <div className="pt-2.5 mt-2 border-t border-emerald-500/15 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-800 dark:text-slate-200 font-semibold flex items-center space-x-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    <span>Modelo de IA Selecionado</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={fetchAvailableModels}
+                    disabled={isLoadingModels || (!geminiKey.trim() && !athlete?.gemini_api_key_configured)}
+                    title="Buscar lista de modelos suportados pela sua chave no Google"
+                    className="text-[10px] text-cyan-700 dark:text-cyan-400 hover:underline flex items-center space-x-1 disabled:opacity-40 font-medium"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingModels ? "animate-spin" : ""}`} />
+                    <span>{isLoadingModels ? "Consultando Google..." : "Buscar Modelos da Chave"}</span>
+                  </button>
+                </div>
+
+                <select
+                  value={geminiModel}
+                  onChange={(e) => setGeminiModel(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500 text-xs font-medium"
+                >
+                  {availableModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.displayName || m.id}
+                    </option>
+                  ))}
+                  {!availableModels.some((m) => m.id === geminiModel) && (
+                    <option value={geminiModel}>{geminiModel} (Personalizado)</option>
+                  )}
+                </select>
+
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 px-0.5">
+                  <span>Recomendado: <b>gemini-flash-lite-latest</b> ou <b>gemini-3.5-flash</b></span>
+                  <span>ID: <code className="text-emerald-600 dark:text-emerald-400 font-mono">{geminiModel}</code></span>
+                </div>
+
+                {modelStatusMsg && (
+                  <div className="text-[10px] text-cyan-700 dark:text-cyan-400 italic">
+                    {modelStatusMsg}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

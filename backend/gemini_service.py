@@ -12,8 +12,18 @@ from database import (
 
 logger = logging.getLogger("librun.gemini")
 
-DEFAULT_MODEL = "gemini-1.5-flash"
-FALLBACK_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-flash-lite-latest"
+KNOWN_POPULAR_MODELS = [
+    {"id": "gemini-flash-lite-latest", "displayName": "Gemini Flash-Lite Latest (Mais Rápido & Alta Disponibilidade - Recomendado)", "description": "Menor latência, alta cota e excelente estabilidade."},
+    {"id": "gemini-3.5-flash", "displayName": "Gemini 3.5 Flash", "description": "Modelo avançado equilibrado."},
+    {"id": "gemini-3.8-flash", "displayName": "Gemini 3.8 Flash", "description": "Versão 3.8 Flash mais recente."},
+    {"id": "gemini-flash-latest", "displayName": "Gemini Flash Latest", "description": "Aponta para versão Flash mais recente."},
+    {"id": "gemini-3.5-flash-lite", "displayName": "Gemini 3.5 Flash Lite", "description": "Versão 3.5 Flash leve."},
+    {"id": "gemini-3-flash-preview", "displayName": "Gemini 3 Flash Preview", "description": "Preview da geração 3."},
+    {"id": "gemini-2.5-pro", "displayName": "Gemini 2.5 Pro (Raciocínio Profundo)", "description": "Maior capacidade analítica."},
+    {"id": "gemini-2.0-flash", "displayName": "Gemini 2.0 Flash", "description": "Versão 2.0 Flash."},
+    {"id": "gemini-1.5-flash", "displayName": "Gemini 1.5 Flash (Legado)", "description": "Versão 1.5 Flash legada."},
+]
 
 def get_gemini_key() -> Optional[str]:
     """Retrieve Gemini API key from database settings or environment variable."""
@@ -26,12 +36,72 @@ def get_gemini_key() -> Optional[str]:
         return env_key.strip()
     return None
 
-async def validate_gemini_key(api_key: str) -> Dict[str, Any]:
-    """Validates if the provided Gemini API key is valid and has active quota."""
+def get_gemini_model() -> str:
+    """Retrieve configured Gemini model from athlete settings."""
+    settings = get_athlete_settings()
+    model = settings.get("gemini_model")
+    if model and model.strip():
+        return model.strip().replace("models/", "")
+    return DEFAULT_MODEL
+
+async def list_available_models(api_key: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Queries Google Generative Language ModelService.ListModels to see all models available for this API key."""
+    key = api_key or get_gemini_key()
+    if not key:
+        return KNOWN_POPULAR_MODELS
+
+    endpoints = [
+        f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+        f"https://generativelanguage.googleapis.com/v1/models?key={key}",
+    ]
+
+    for ep in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(ep)
+                if res.status_code == 200:
+                    data = res.json()
+                    models_raw = data.get("models", [])
+                    available = []
+                    for m in models_raw:
+                        methods = m.get("supportedGenerationMethods", [])
+                        if "generateContent" in methods:
+                            clean_id = m.get("name", "").replace("models/", "")
+                            available.append({
+                                "id": clean_id,
+                                "name": m.get("name"),
+                                "displayName": m.get("displayName") or clean_id,
+                                "description": m.get("description", "")
+                            })
+                    if available:
+                        return available
+        except Exception as e:
+            logger.warning(f"Erro ao listar modelos em {ep}: {e}")
+
+    return KNOWN_POPULAR_MODELS
+
+async def validate_gemini_key(api_key: str, chosen_model: Optional[str] = None) -> Dict[str, Any]:
+    """Validates if the provided Gemini API key is valid and fetches its supported models."""
     if not api_key or not api_key.strip():
         return {"valid": False, "error": "Chave API não fornecida."}
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{DEFAULT_MODEL}:generateContent?key={api_key.strip()}"
+    key = api_key.strip()
+
+    # 1. Fetch available models from Google ModelService
+    available_models = await list_available_models(key)
+    
+    # 2. Select model to test
+    target_model = chosen_model.replace("models/", "").strip() if chosen_model else get_gemini_model()
+    if not any(m["id"] == target_model for m in available_models) and available_models:
+        # If target model is not in available models, pick the first working model from Google
+        target_model = available_models[0]["id"]
+
+    # 3. Test generateContent with target model
+    endpoints = [
+        f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={key}",
+        f"https://generativelanguage.googleapis.com/v1/models/{target_model}:generateContent?key={key}",
+    ]
+
     payload = {
         "contents": [
             {
@@ -46,40 +116,63 @@ async def validate_gemini_key(api_key: str) -> Dict[str, Any]:
         }
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            response = await client.post(url, json=payload)
-            if response.status_code == 200:
-                data = response.json()
-                text = ""
-                try:
-                    text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                except Exception:
-                    pass
-                return {"valid": True, "message": "Chave API válida e conectada ao Google Gemini!", "response": text}
-            else:
-                try:
-                    err_json = response.json()
-                    err_msg = err_json.get("error", {}).get("message", response.text)
-                except Exception:
-                    err_msg = response.text
-                return {"valid": False, "error": f"Erro do Google ({response.status_code}): {err_msg}"}
-    except httpx.TimeoutException:
-        return {"valid": False, "error": "Tempo limite esgotado ao conectar ao Google Gemini. Verifique sua conexão."}
-    except Exception as e:
-        return {"valid": False, "error": f"Falha de conexão: {str(e)}"}
+    last_error = ""
+    for ep in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                response = await client.post(ep, json=payload)
+                if response.status_code == 200:
+                    return {
+                        "valid": True,
+                        "message": f"Chave API conectada com sucesso ao Google Gemini (Modelo: {target_model})!",
+                        "tested_model": target_model,
+                        "available_models": available_models
+                    }
+                else:
+                    try:
+                        err_json = response.json()
+                        err_msg = err_json.get("error", {}).get("message", response.text)
+                    except Exception:
+                        err_msg = response.text
+                    last_error = f"Erro do Google ({response.status_code}): {err_msg}"
+        except httpx.TimeoutException:
+            last_error = "Tempo limite esgotado ao conectar ao Google Gemini."
+        except Exception as e:
+            last_error = f"Falha de conexão: {str(e)}"
 
-async def call_gemini(prompt: str, api_key: Optional[str] = None) -> str:
-    """Calls Gemini API with the given prompt, trying default model and falling back if needed."""
+    return {
+        "valid": False,
+        "error": last_error,
+        "available_models": available_models
+    }
+
+async def call_gemini(
+    prompt: str, 
+    api_key: Optional[str] = None, 
+    model: Optional[str] = None
+) -> str:
+    """Calls Gemini API with the given prompt and configured model."""
     key = api_key or get_gemini_key()
     if not key:
         raise ValueError("Chave da API Gemini não configurada. Adicione sua chave nas configurações.")
 
-    models_to_try = [DEFAULT_MODEL, FALLBACK_MODEL]
+    chosen_model = (model or get_gemini_model()).replace("models/", "").strip()
+    
+    # Try the user's selected model first, then safe fallbacks
+    models_to_try = [chosen_model]
+    for m in ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"]:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
     last_error = None
 
-    for model in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    for candidate_model in models_to_try:
+        # Try both v1beta and v1 endpoints
+        endpoints = [
+            f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={key}",
+            f"https://generativelanguage.googleapis.com/v1/models/{candidate_model}:generateContent?key={key}",
+        ]
+
         payload = {
             "contents": [
                 {
@@ -94,33 +187,44 @@ async def call_gemini(prompt: str, api_key: Optional[str] = None) -> str:
             }
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
-                res = await client.post(url, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    candidates = data.get("candidates", [])
-                    if candidates and "content" in candidates[0]:
-                        parts = candidates[0]["content"].get("parts", [])
-                        if parts and "text" in parts[0]:
-                            return parts[0]["text"]
-                    raise ValueError("Formato de resposta inesperado retornado pelo Gemini.")
-                else:
-                    try:
-                        err_data = res.json()
-                        err_msg = err_data.get("error", {}).get("message", res.text)
-                    except Exception:
-                        err_msg = res.text
-                    last_error = f"Erro {res.status_code} ({model}): {err_msg}"
-                    # If model not found or bad request, try next model; if quota/auth error, don't bother looping
-                    if res.status_code in [400, 403]:
+        for ep in endpoints:
+            try:
+                async with httpx.AsyncClient(timeout=40.0) as client:
+                    res = await client.post(ep, json=payload)
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if candidates and "content" in candidates[0]:
+                            parts = candidates[0]["content"].get("parts", [])
+                            if parts and "text" in parts[0]:
+                                return parts[0]["text"]
+                        raise ValueError("Formato de resposta inesperado retornado pelo Gemini.")
+                    elif res.status_code in [400, 403]:
+                        # Authentication or quota error
+                        try:
+                            err_msg = res.json().get("error", {}).get("message", res.text)
+                        except Exception:
+                            err_msg = res.text
                         raise ValueError(f"Erro na chave da API Gemini: {err_msg}")
-        except httpx.TimeoutException:
-            last_error = f"Tempo de resposta excedido com o modelo {model}."
-        except Exception as e:
-            last_error = str(e)
+                    else:
+                        # 404 (model not found) or 503 (temporarily unavailable) -> try next
+                        try:
+                            err_msg = res.json().get("error", {}).get("message", res.text)
+                        except Exception:
+                            err_msg = res.text
+                        last_error = f"Modelo '{candidate_model}' indisponível ({res.status_code}): {err_msg}"
+            except httpx.TimeoutException:
+                last_error = f"Tempo de resposta excedido com o modelo {candidate_model}."
+            except ValueError:
+                raise
+            except Exception as e:
+                last_error = str(e)
 
-    raise RuntimeError(f"Não foi possível obter resposta do Gemini: {last_error}")
+    raise RuntimeError(
+        f"Não foi possível obter resposta do Gemini com o modelo configurado ({chosen_model}).\n"
+        f"Detalhe: {last_error}\n"
+        f"Dica: Acesse as Configurações ⚙️ e selecione outro modelo do Gemini (ex.: gemini-2.0-flash ou gemini-pro)."
+    )
 
 def format_pace(speed_ms: float) -> str:
     if not speed_ms or speed_ms <= 0:
@@ -153,7 +257,8 @@ async def generate_global_coaching_analysis(
                 "success": True,
                 "analysis": cached["content"],
                 "created_at": cached["created_at"],
-                "cached": True
+                "cached": True,
+                "model_used": cached.get("model_used") or get_gemini_model()
             }
 
     key = get_gemini_key()
@@ -260,14 +365,16 @@ Elabore uma análise completa, altamente técnica, encorajadora e estruturada em
 Escreva em português brasileiro de forma direta, motivadora, usando termos técnicos do atletismo de forma clara e visualmente agradável com emojis pontuais e formatação rica em Markdown.
 """
 
-    analysis_text = await call_gemini(prompt)
-    save_ai_analysis(analysis_type="coach_global", content=analysis_text, model_used=DEFAULT_MODEL)
+    current_model = get_gemini_model()
+    analysis_text = await call_gemini(prompt, model=current_model)
+    save_ai_analysis(analysis_type="coach_global", content=analysis_text, model_used=current_model)
 
     return {
         "success": True,
         "analysis": analysis_text,
         "cached": False,
-        "created_at": "Agora"
+        "created_at": "Agora",
+        "model_used": current_model
     }
 
 async def generate_single_activity_analysis(
@@ -282,7 +389,8 @@ async def generate_single_activity_analysis(
             "success": True,
             "analysis": cached["content"],
             "created_at": cached["created_at"],
-            "cached": True
+            "cached": True,
+            "model_used": cached.get("model_used") or get_gemini_model()
         }
 
     key = get_gemini_key()
@@ -309,7 +417,6 @@ async def generate_single_activity_analysis(
     date_str = str(activity.get("start_date", ""))[:10]
     name = activity.get("name", "Corrida")
 
-    # HR intensity % of max HR
     hr_intensity_pct = round((avg_hr / max_hr) * 100, 1) if avg_hr and max_hr else None
 
     prompt = f"""Você é um treinador de corrida de alta performance e fisiologista esportivo. Faça um debriefing detalhado desta corrida específica do atleta {athlete_name}:
@@ -336,12 +443,14 @@ Responda em Markdown estruturado, cobrindo:
 Escreva de forma elegante, precisa, em português brasileiro e com tópicos objetivos.
 """
 
-    analysis_text = await call_gemini(prompt)
-    save_ai_analysis(analysis_type="activity", content=analysis_text, target_id=strava_id, model_used=DEFAULT_MODEL)
+    current_model = get_gemini_model()
+    analysis_text = await call_gemini(prompt, model=current_model)
+    save_ai_analysis(analysis_type="activity", content=analysis_text, target_id=strava_id, model_used=current_model)
 
     return {
         "success": True,
         "analysis": analysis_text,
         "cached": False,
-        "created_at": "Agora"
+        "created_at": "Agora",
+        "model_used": current_model
     }

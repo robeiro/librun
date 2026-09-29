@@ -22,7 +22,6 @@ import {
   Sparkles, 
   UploadCloud, 
   Activity as ActivityIcon, 
-  Target, 
   Heart, 
   Calendar, 
   ShieldAlert, 

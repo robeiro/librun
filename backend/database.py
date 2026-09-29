@@ -32,20 +32,23 @@ def init_db():
         target_distance TEXT DEFAULT '10k',
         target_time_minutes REAL DEFAULT 50.0,
         gemini_api_key TEXT,
+        gemini_model TEXT DEFAULT 'gemini-flash-lite-latest',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # Check if gemini_api_key column exists (migration for existing db)
+    # Check if gemini_api_key and gemini_model columns exist (migration for existing db)
     cursor.execute("PRAGMA table_info(athlete_settings)")
     settings_cols = [col[1] for col in cursor.fetchall()]
     if "gemini_api_key" not in settings_cols:
         cursor.execute("ALTER TABLE athlete_settings ADD COLUMN gemini_api_key TEXT")
+    if "gemini_model" not in settings_cols:
+        cursor.execute("ALTER TABLE athlete_settings ADD COLUMN gemini_model TEXT DEFAULT 'gemini-flash-lite-latest'")
 
     # Default settings row if not present
     cursor.execute("""
-    INSERT OR IGNORE INTO athlete_settings (id, athlete_name, max_hr, rest_hr, target_distance, target_time_minutes)
-    VALUES (1, 'Corredor', 190, 55, '10k', 50.0)
+    INSERT OR IGNORE INTO athlete_settings (id, athlete_name, max_hr, rest_hr, target_distance, target_time_minutes, gemini_model)
+    VALUES (1, 'Corredor', 190, 55, '10k', 50.0, 'gemini-flash-lite-latest')
     """)
 
     # Activities Table
@@ -105,7 +108,7 @@ def save_athlete_settings(settings: Dict[str, Any]):
         if k in ["strava_client_id", "strava_client_secret", "strava_access_token",
                  "strava_refresh_token", "strava_token_expires_at", "athlete_id",
                  "athlete_name", "max_hr", "rest_hr", "target_distance", "target_time_minutes",
-                 "gemini_api_key"]:
+                 "gemini_api_key", "gemini_model"]:
             fields.append(f"{k} = ?")
             values.append(v)
     
@@ -123,13 +126,17 @@ def get_athlete_settings() -> Dict[str, Any]:
     row = cursor.fetchone()
     conn.close()
     if row:
-        return dict(row)
+        res = dict(row)
+        if not res.get("gemini_model"):
+            res["gemini_model"] = "gemini-1.5-flash"
+        return res
     return {
         "athlete_name": "Corredor",
         "max_hr": 190,
         "rest_hr": 55,
         "target_distance": "10k",
-        "target_time_minutes": 50.0
+        "target_time_minutes": 50.0,
+        "gemini_model": "gemini-1.5-flash"
     }
 
 def save_ai_analysis(analysis_type: str, content: str, target_id: Optional[str] = None, model_used: Optional[str] = None):
