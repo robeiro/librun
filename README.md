@@ -92,6 +92,10 @@ Diferente de dashboards genéricos, o **librun** atua como um treinador científ
    - Estima seu potencial e ritmo sugerido (min/km) para **5 km**, **10 km**, **Meia Maratona (21.1 km)** e **Maratona (42.2 km)** a partir de seus melhores esforços recentes.
 8. **Librun Performance Index (0 a 100)**:
    - Score equilibrado composto por: Consistência (25%), Carga ACWR (25%), Polarização 80/20 (25%) e Cadência (25%).
+9. **📈 Gráfico de Progresso & Evolução Temporal**:
+   - Curva de evolução treino a treino com linha de tendência de média móvel suavizada para eliminar ruídos.
+   - Monitoramento do **Fator de Eficiência Aeróbica** (velocidade em m/min por batimento cardíaco), Frequência Cardíaca, Cadência e Volume.
+   - Visualização por corrida individual, consolidação semanal e consolidação mensal, com filtros por distância (curtas, médias e longões) e cálculo automático de deltas de melhora.
 
 ---
 

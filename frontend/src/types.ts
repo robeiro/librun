@@ -105,6 +105,77 @@ export interface AcwrData {
   message: string;
 }
 
+export interface ProgressPoint {
+  id: string | number;
+  name: string;
+  date: string;
+  date_formatted: string;
+  full_date: string;
+  distance_km: number;
+  moving_time_seconds: number;
+  pace_seconds: number;
+  pace_formatted: string;
+  speed_kmh: number;
+  average_heartrate?: number | null;
+  average_cadence?: number | null;
+  aerobic_efficiency?: number | null;
+  category: "curta" | "media" | "longao";
+  moving_avg_pace_seconds: number;
+  moving_avg_pace_formatted: string;
+  moving_avg_efficiency?: number | null;
+}
+
+export interface ProgressPeriodPoint {
+  label: string;
+  period: string;
+  start_date: string;
+  total_km: number;
+  run_count: number;
+  avg_pace_seconds: number;
+  avg_pace_formatted: string;
+  best_pace_seconds: number;
+  best_pace_formatted: string;
+  avg_heartrate?: number | null;
+  avg_cadence?: number | null;
+  avg_efficiency?: number | null;
+  longest_run_km: number;
+}
+
+export interface ProgressSummary {
+  total_activities: number;
+  baseline_pace_formatted: string;
+  recent_pace_formatted: string;
+  pace_diff_seconds: number;
+  pace_improvement_pct: number;
+  baseline_efficiency?: number | null;
+  recent_efficiency?: number | null;
+  efficiency_improvement_pct?: number | null;
+  baseline_cadence?: number | null;
+  recent_cadence?: number | null;
+  cadence_diff?: number | null;
+  fastest_run?: {
+    name: string;
+    date: string;
+    pace: string;
+    distance_km: number;
+  } | null;
+  longest_run?: {
+    name: string;
+    date: string;
+    distance_km: number;
+    pace: string;
+  } | null;
+  verdict_headline: string;
+  verdict_text: string;
+}
+
+export interface ProgressData {
+  timeline: ProgressPoint[];
+  weekly: ProgressPeriodPoint[];
+  monthly: ProgressPeriodPoint[];
+  summary: ProgressSummary;
+}
+
 export interface AnalyticsData {
   summary: AnalyticsSummary;
   acwr: AcwrData;
@@ -117,6 +188,7 @@ export interface AnalyticsData {
   weekly_breakdown: WeeklyWeek[];
   race_predictions: RacePredictions;
   coaching_insights: CoachingInsight[];
+  progress?: ProgressData;
 }
 
 export interface AthleteSettings {

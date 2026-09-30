@@ -18,6 +18,7 @@ import { StravaConnectModal } from "../components/StravaConnectModal";
 import { SettingsModal } from "../components/SettingsModal";
 import { GeminiCoach } from "../components/GeminiCoach";
 import { ActivityAiModal } from "../components/ActivityAiModal";
+import { ProgressChart } from "../components/ProgressChart";
 import { 
   Sparkles, 
   UploadCloud, 
@@ -27,7 +28,8 @@ import {
   ShieldAlert, 
   CheckCircle2,
   Swords,
-  BrainCircuit
+  BrainCircuit,
+  TrendingUp
 } from "lucide-react";
 
 export default function Home() {
@@ -37,7 +39,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "coach" | "zones" | "duel" | "activities">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "progress" | "coach" | "zones" | "duel" | "activities">("overview");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Selected activities for the virtual duel
@@ -343,6 +345,18 @@ export default function Home() {
                 </button>
 
                 <button
+                  onClick={() => setActiveTab("progress")}
+                  className={`flex items-center space-x-2 py-2 px-3.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                    activeTab === "progress"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
+                  }`}
+                >
+                  <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Progresso & Evolução</span>
+                </button>
+
+                <button
                   onClick={() => setActiveTab("coach")}
                   className={`flex items-center space-x-2 py-2 px-3.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
                     activeTab === "coach"
@@ -413,7 +427,12 @@ export default function Home() {
                   <CoachingInsights insights={analytics.coaching_insights} />
                 )}
 
-                {/* 3. Charts Grid */}
+                {/* 3. Progress Over Time Chart */}
+                {analytics?.progress && (
+                  <ProgressChart progress={analytics.progress} />
+                )}
+
+                {/* 4. Charts Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {analytics?.weekly_breakdown && (
                     <WeeklyVolumeChart weeks={analytics.weekly_breakdown} />
@@ -424,12 +443,40 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* 4. Race Predictions */}
+                {/* 5. Race Predictions */}
                 {analytics?.race_predictions && (
                   <RacePredictor predictionsData={analytics.race_predictions} />
                 )}
 
-                {/* 5. Recent Activities */}
+                {/* 6. Recent Activities */}
+                <ActivitiesTable 
+                  activities={activities} 
+                  onCompare={handleCompareActivity}
+                  onAnalyzeAi={handleAnalyzeActivityWithAi}
+                />
+              </div>
+            )}
+
+            {/* TAB: PROGRESS & EVOLUTION */}
+            {activeTab === "progress" && (
+              <div className="space-y-6">
+                {/* 1. Main Progress Chart */}
+                {analytics?.progress && (
+                  <ProgressChart progress={analytics.progress} />
+                )}
+
+                {/* 2. Supporting Breakdown Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {analytics?.weekly_breakdown && (
+                    <WeeklyVolumeChart weeks={analytics.weekly_breakdown} />
+                  )}
+
+                  {analytics?.race_predictions && (
+                    <RacePredictor predictionsData={analytics.race_predictions} />
+                  )}
+                </div>
+
+                {/* 3. Activities Table */}
                 <ActivitiesTable 
                   activities={activities} 
                   onCompare={handleCompareActivity}

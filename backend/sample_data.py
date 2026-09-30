@@ -29,15 +29,16 @@ def seed_sample_activities(clear_existing: bool = True) -> int:
     count = 0
     # Generate for past 10 weeks (70 days)
     for week in range(9, -1, -1):
+        progress_factor = (9 - week) / 9.0  # 0.0 (past) to 1.0 (recent)
         week_monday = now - timedelta(days=now.weekday() + (week * 7))
         
         # Tuesday: Rodagem 6k a 8k
         tue_date = week_monday + timedelta(days=1, hours=6, minutes=45)
         dist_km = round(random.uniform(6.5, 8.2), 2)
-        pace_min = random.uniform(5.4, 5.7) # ~5:25 - 5:42 min/km
+        pace_min = (5.65 - progress_factor * 0.30) + random.uniform(-0.06, 0.06) # Evolui de ~5:39 para ~5:21 min/km
         time_sec = int(dist_km * pace_min * 60)
-        hr = int(random.uniform(142, 149)) # Z3! (Grey zone issue)
-        cadence = int(random.uniform(157, 161))
+        hr = int(149 - progress_factor * 4 + random.uniform(-2, 2))
+        cadence = int(157 + progress_factor * 5 + random.uniform(-1, 1))
         activities.append({
             "strava_id": f"sample_{tue_date.strftime('%Y%m%d%H%M')}",
             "name": "Rodagem Matinal",
@@ -59,14 +60,14 @@ def seed_sample_activities(clear_existing: bool = True) -> int:
         is_intervals = (week % 2 == 0)
         dist_km = round(random.uniform(5.0, 7.0), 2)
         if is_intervals:
-            pace_min = random.uniform(4.7, 5.0) # ~4:45 - 5:00 min/km
-            hr = int(random.uniform(162, 172)) # Z4
-            cadence = int(random.uniform(164, 168))
+            pace_min = (4.95 - progress_factor * 0.32) + random.uniform(-0.05, 0.05) # ~4:57 para ~4:38 min/km
+            hr = int(168 - progress_factor * 2 + random.uniform(-2, 2))
+            cadence = int(163 + progress_factor * 4 + random.uniform(-1, 1))
             name = "Intervalados 6x400m na Pista"
         else:
-            pace_min = random.uniform(5.1, 5.3) # ~5:10 min/km
-            hr = int(random.uniform(154, 160)) # Z3/Z4
-            cadence = int(random.uniform(160, 164))
+            pace_min = (5.28 - progress_factor * 0.28) + random.uniform(-0.05, 0.05) # ~5:17 para ~5:00 min/km
+            hr = int(158 - progress_factor * 3 + random.uniform(-2, 2))
+            cadence = int(160 + progress_factor * 4 + random.uniform(-1, 1))
             name = "Treino Contínuo Ritmo de Prova"
 
         time_sec = int(dist_km * pace_min * 60)
@@ -90,10 +91,10 @@ def seed_sample_activities(clear_existing: bool = True) -> int:
         if week % 2 != 0:
             sat_date = week_monday + timedelta(days=5, hours=8, minutes=0)
             dist_km = round(random.uniform(4.5, 5.5), 2)
-            pace_min = random.uniform(5.6, 5.9)
+            pace_min = (5.85 - progress_factor * 0.25) + random.uniform(-0.06, 0.06)
             time_sec = int(dist_km * pace_min * 60)
-            hr = int(random.uniform(138, 144))
-            cadence = int(random.uniform(158, 162))
+            hr = int(142 - progress_factor * 3 + random.uniform(-2, 2))
+            cadence = int(158 + progress_factor * 3 + random.uniform(-1, 1))
             activities.append({
                 "strava_id": f"sample_{sat_date.strftime('%Y%m%d%H%M')}",
                 "name": "Soltura Leve de Sábado",
@@ -115,10 +116,10 @@ def seed_sample_activities(clear_existing: bool = True) -> int:
         # Progressive volume
         base_long = 10.0 + (9 - week) * 0.6
         dist_km = round(base_long + random.uniform(-0.5, 0.8), 2)
-        pace_min = random.uniform(5.4, 5.7)
+        pace_min = (5.65 - progress_factor * 0.25) + random.uniform(-0.06, 0.06)
         time_sec = int(dist_km * pace_min * 60)
-        hr = int(random.uniform(144, 153)) # Z3
-        cadence = int(random.uniform(157, 161))
+        hr = int(148 - progress_factor * 3 + random.uniform(-2, 2))
+        cadence = int(157 + progress_factor * 4 + random.uniform(-1, 1))
         activities.append({
             "strava_id": f"sample_{sun_date.strftime('%Y%m%d%H%M')}",
             "name": f"Longão de Domingo ({int(dist_km)}K)",
