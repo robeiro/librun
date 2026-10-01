@@ -281,7 +281,7 @@ def upsert_activity(act: Dict[str, Any], athlete_id: Optional[str] = None) -> bo
     conn.close()
     return True
 
-def get_activities(limit: Optional[int] = None, act_type: Optional[str] = "Run", athlete_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_activities(limit: Optional[int] = None, act_type: Optional[str] = None, athlete_id: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     

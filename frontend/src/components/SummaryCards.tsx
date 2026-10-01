@@ -140,7 +140,9 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({ summary, acwr }) => 
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             Total de <strong className="text-slate-800 dark:text-slate-200">{summary.total_distance_km} km</strong> em{" "}
-            <strong className="text-slate-800 dark:text-slate-200">{summary.total_runs} corridas</strong> ({summary.total_time_hours}h)
+            <strong className="text-slate-800 dark:text-slate-200">
+              {summary.total_activities ? `${summary.total_activities} treinos` : `${summary.total_runs} corridas`}
+            </strong> ({summary.total_time_hours}h)
           </p>
         </div>
         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400">

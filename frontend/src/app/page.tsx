@@ -139,7 +139,7 @@ export default function Home() {
       
       const handleCallback = async () => {
         setIsLoading(true);
-        showToast("Conectando ao Strava e sincronizando suas corridas...");
+        showToast("Conectando ao Strava e sincronizando suas atividades...");
         try {
           const savedLimit = typeof window !== "undefined" ? localStorage.getItem("librun_sync_limit") : null;
           const savedClientId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_id") : null;
@@ -175,11 +175,11 @@ export default function Home() {
               }
             }
             if (exData.sync_error) {
-              showToast(`Strava conectado, mas houve erro ao importar corridas: ${exData.sync_error}`);
+              showToast(`Strava conectado, mas houve erro ao importar atividades: ${exData.sync_error}`);
             } else {
               const countMsg = exData.sync?.runs_synced 
-                ? `${exData.sync.runs_synced} corridas importadas com sucesso!` 
-                : "Suas corridas foram importadas.";
+                ? `${exData.sync.runs_synced} atividades importadas com sucesso!` 
+                : "Suas atividades foram importadas.";
               showToast(`Conta do Strava conectada com sucesso! ${countMsg}`);
             }
           } else {
@@ -245,14 +245,16 @@ export default function Home() {
         headers["X-Athlete-Id"] = savedAthleteId;
       }
       await fetch("/api/activities", { method: "DELETE", headers });
-      showToast("Todas as corridas foram apagadas.");
+      showToast("Todas as atividades foram apagadas.");
       fetchData();
     } catch (e) {
       console.error(e);
     }
   };
 
-  const hasData = activities.length > 0 && analytics && analytics.summary.total_runs > 0;
+  const hasData = Boolean(
+    activities.length > 0 && analytics && ((analytics.summary.total_runs || 0) > 0 || (analytics.summary.total_activities || 0) > 0 || activities.length > 0)
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col transition-colors">
@@ -402,7 +404,7 @@ export default function Home() {
                   }`}
                 >
                   <Calendar className="w-4 h-4" />
-                  <span>Corridas ({activities.length})</span>
+                  <span>Atividades ({activities.length})</span>
                 </button>
               </div>
 

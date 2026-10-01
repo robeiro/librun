@@ -80,6 +80,7 @@ export interface RacePredictions {
 
 export interface AnalyticsSummary {
   total_runs: number;
+  total_activities?: number;
   total_distance_km: number;
   total_time_hours: number;
   total_elevation_gain_m: number;
@@ -105,24 +106,49 @@ export interface AcwrData {
   message: string;
 }
 
+export interface SportSummaryItem {
+  sport_type: string;
+  sport_category: string;
+  sport_label: string;
+  sport_icon: string;
+  sport_color: string;
+  count: number;
+  total_time_hours: number;
+  total_km: number;
+  pct_time: number;
+}
+
 export interface ProgressPoint {
   id: string | number;
   name: string;
   date: string;
   date_formatted: string;
   full_date: string;
+  sport_type?: string;
+  sport_category?: "run" | "ride" | "swim" | "walk" | "workout" | "other" | string;
+  sport_label?: string;
+  sport_icon?: string;
+  sport_color?: string;
+  pace_unit?: string;
+  cadence_unit?: string;
   distance_km: number;
   moving_time_seconds: number;
+  moving_time_minutes?: number;
+  moving_time_formatted?: string;
   pace_seconds: number;
   pace_formatted: string;
   speed_kmh: number;
   average_heartrate?: number | null;
   average_cadence?: number | null;
   aerobic_efficiency?: number | null;
-  category: "curta" | "media" | "longao";
+  training_load?: number;
+  total_elevation_gain?: number;
+  category: "curta" | "media" | "longao" | "geral" | string;
   moving_avg_pace_seconds: number;
   moving_avg_pace_formatted: string;
+  moving_avg_speed_kmh?: number;
   moving_avg_efficiency?: number | null;
+  moving_avg_hr?: number | null;
 }
 
 export interface ProgressPeriodPoint {
@@ -130,7 +156,9 @@ export interface ProgressPeriodPoint {
   period: string;
   start_date: string;
   total_km: number;
+  total_time_hours?: number;
   run_count: number;
+  total_sessions?: number;
   avg_pace_seconds: number;
   avg_pace_formatted: string;
   best_pace_seconds: number;
@@ -139,14 +167,24 @@ export interface ProgressPeriodPoint {
   avg_cadence?: number | null;
   avg_efficiency?: number | null;
   longest_run_km: number;
+  by_sport?: Record<string, { count: number; km: number; hours: number }>;
 }
 
 export interface ProgressSummary {
   total_activities: number;
+  total_hours?: number;
+  total_distance_km?: number;
+  multi_sport_count?: number;
+  primary_sport?: string;
+  sports_distribution?: SportSummaryItem[];
   baseline_pace_formatted: string;
   recent_pace_formatted: string;
   pace_diff_seconds: number;
   pace_improvement_pct: number;
+  baseline_speed_kmh?: number | null;
+  recent_speed_kmh?: number | null;
+  speed_diff_kmh?: number | null;
+  speed_improvement_pct?: number | null;
   baseline_efficiency?: number | null;
   recent_efficiency?: number | null;
   efficiency_improvement_pct?: number | null;
@@ -165,6 +203,12 @@ export interface ProgressSummary {
     distance_km: number;
     pace: string;
   } | null;
+  longest_ride?: {
+    name: string;
+    date: string;
+    distance_km: number;
+    speed: string;
+  } | null;
   verdict_headline: string;
   verdict_text: string;
 }
@@ -173,6 +217,7 @@ export interface ProgressData {
   timeline: ProgressPoint[];
   weekly: ProgressPeriodPoint[];
   monthly: ProgressPeriodPoint[];
+  sports_summary?: SportSummaryItem[];
   summary: ProgressSummary;
 }
 

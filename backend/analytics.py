@@ -21,6 +21,149 @@ def format_pace(seconds_per_km: float) -> str:
         seconds = 0
     return f"{minutes}:{seconds:02d} min/km"
 
+def classify_sport(raw_type: Any) -> Dict[str, str]:
+    """
+    Standardizes Strava and custom activity types into sport categories:
+    - run: Corrida, Trail, Esteira, Pista
+    - ride: Ciclismo de Estrada, MTB, Gravel, Rolo Virtual, E-Bike
+    - swim: Natação em piscina e águas abertas
+    - walk: Caminhada, Trilha (Hike)
+    - workout: Musculação, Treino Funcional, Crossfit, Yoga, Pilates
+    - other: Outros esportes
+    """
+    t = str(raw_type or "").strip()
+    tl = t.lower()
+
+    if any(k in tl for k in ["run", "corrida", "trailrun", "virtualrun", "track"]):
+        return {
+            "sport_type": "Run",
+            "sport_category": "run",
+            "sport_label": "Corrida",
+            "sport_icon": "🏃",
+            "sport_color": "#10b981", # Emerald
+            "pace_unit": "min/km",
+            "cadence_unit": "spm"
+        }
+    if any(k in tl for k in ["ride", "bike", "cicl", "virtualride", "mountainbikeride", "gravelride", "ebikeride"]):
+        return {
+            "sport_type": "Ride",
+            "sport_category": "ride",
+            "sport_label": "Ciclismo",
+            "sport_icon": "🚴",
+            "sport_color": "#0ea5e9", # Sky
+            "pace_unit": "km/h",
+            "cadence_unit": "rpm"
+        }
+    if any(k in tl for k in ["swim", "nata", "swimming"]):
+        return {
+            "sport_type": "Swim",
+            "sport_category": "swim",
+            "sport_label": "Natação",
+            "sport_icon": "🏊",
+            "sport_color": "#3b82f6", # Blue
+            "pace_unit": "min/100m",
+            "cadence_unit": "braçadas"
+        }
+    if any(k in tl for k in ["walk", "caminh", "hike", "trilha"]):
+        return {
+            "sport_type": "Walk",
+            "sport_category": "walk",
+            "sport_label": "Caminhada",
+            "sport_icon": "🚶",
+            "sport_color": "#f59e0b", # Amber
+            "pace_unit": "min/km",
+            "cadence_unit": "spm"
+        }
+    if any(k in tl for k in ["weight", "strength", "força", "muscul", "workout", "crossfit", "gym", "yoga", "pilates", "fitness", "hiit"]):
+        return {
+            "sport_type": "Workout",
+            "sport_category": "workout",
+            "sport_label": "Treino de Força",
+            "sport_icon": "🏋️",
+            "sport_color": "#8b5cf6", # Purple
+            "pace_unit": "",
+            "cadence_unit": ""
+        }
+    return {
+        "sport_type": t if t else "Other",
+        "sport_category": "other",
+        "sport_label": t if t else "Outros",
+        "sport_icon": "⚡",
+        "sport_color": "#64748b", # Slate
+        "pace_unit": "min/km",
+        "cadence_unit": ""
+    }
+
+def format_duration(seconds: int) -> str:
+    """Formats seconds into human friendly duration like 45m or 1h 20m."""
+    if seconds <= 0:
+        return "0m"
+    h = seconds // 3600
+    m = int(round((seconds % 3600) / 60.0))
+    if h > 0:
+        return f"{h}h {m}m" if m > 0 else f"{h}h"
+    return f"{m}m"
+
+def format_sport_performance(sport_category: str, distance_m: float, time_s: int) -> str:
+    """Formats performance unit specifically tailored to each sport."""
+    if sport_category == "ride":
+        # Cyclists track speed in km/h
+        if time_s > 0 and distance_m > 0:
+            speed_kmh = (distance_m / 1000.0) / (time_s / 3600.0)
+            return f"{speed_kmh:.1f} km/h"
+        return "--.- km/h"
+    elif sport_category == "swim":
+        # Swimmers track pace in min/100m
+        if distance_m > 0 and time_s > 0:
+            sec_per_100m = time_s / (distance_m / 100.0)
+            m = int(sec_per_100m // 60)
+            s = int(round(sec_per_100m % 60))
+            if s == 60:
+                m += 1
+                s = 0
+            return f"{m}:{s:02d} /100m"
+        return "--:-- /100m"
+    elif sport_category in ["run", "walk"]:
+        if distance_m > 0 and time_s > 0:
+            return format_pace(time_s / (distance_m / 1000.0))
+        return "--:--"
+    else:
+        # Strength / Workout / General
+        return format_duration(time_s)
+
+def calculate_activity_load(activity: Dict[str, Any]) -> float:
+    """
+    Calculates standardized cross-training physiological load (Equivalent Running Load).
+    Allows running, cycling, swimming and strength training to be compared and aggregated safely.
+    """
+    sport_info = classify_sport(activity.get("type", ""))
+    cat = sport_info["sport_category"]
+    dist_km = (float(activity.get("distance") or 0.0)) / 1000.0
+    time_min = (int(activity.get("moving_time") or 0)) / 60.0
+    avg_hr = activity.get("average_heartrate")
+
+    if cat == "run":
+        base_load = dist_km if dist_km > 0 else time_min * 0.18
+    elif cat == "ride":
+        # Cycling has less eccentric shock: 3km cycling ~ 1km running
+        base_load = (dist_km * 0.33) if dist_km > 0 else (time_min * 0.12)
+    elif cat == "swim":
+        # Swimming: high metabolic demand without gravity impact: 1km swimming ~ 4km running
+        base_load = (dist_km * 4.0) if dist_km > 0 else (time_min * 0.20)
+    elif cat == "walk":
+        base_load = (dist_km * 0.50) if dist_km > 0 else (time_min * 0.08)
+    elif cat == "workout":
+        # 50min workout ~ 5.0 km equivalent load
+        base_load = time_min * 0.10
+    else:
+        base_load = dist_km if dist_km > 0 else time_min * 0.10
+
+    intensity_weight = 1.0
+    if avg_hr and avg_hr > 115:
+        intensity_weight = (avg_hr / 160.0) ** 1.3
+
+    return round(base_load * intensity_weight, 2)
+
 def get_hr_zones(max_hr: int = 190, rest_hr: int = 55) -> Dict[str, Dict[str, Any]]:
     """Calculates 5 heart rate zones using percentage of Max HR."""
     return {
@@ -108,14 +251,9 @@ def calculate_acwr(activities: List[Dict[str, Any]], reference_date: Optional[da
     for a in activities:
         dt = parse_iso_date(a.get("start_date") or a.get("start_date_local"))
         if dt:
-            km = (a.get("distance") or 0.0) / 1000.0
-            # TRIMP proxy if HR exists, otherwise km
-            avg_hr = a.get("average_heartrate")
-            intensity_weight = 1.0
-            if avg_hr and avg_hr > 120:
-                intensity_weight = (avg_hr / 160.0) ** 1.3
-            load = km * intensity_weight
-            dated_acts.append((dt, km, load))
+            dist_km = (float(a.get("distance") or 0.0)) / 1000.0
+            load = calculate_activity_load(a)
+            dated_acts.append((dt, dist_km, load))
 
     if not dated_acts:
         return {
@@ -133,15 +271,15 @@ def calculate_acwr(activities: List[Dict[str, Any]], reference_date: Optional[da
     acute_start = ref_dt - timedelta(days=7)
     chronic_start = ref_dt - timedelta(days=28)
 
-    acute_km = sum(km for dt, km, _ in dated_acts if acute_start < dt <= ref_dt)
-    chronic_km_28d = sum(km for dt, km, _ in dated_acts if chronic_start < dt <= ref_dt)
-    chronic_load_avg = chronic_km_28d / 4.0 if chronic_km_28d > 0 else 0.0
+    acute_load = sum(load for dt, _, load in dated_acts if acute_start < dt <= ref_dt)
+    chronic_load_28d = sum(load for dt, _, load in dated_acts if chronic_start < dt <= ref_dt)
+    chronic_load_avg = chronic_load_28d / 4.0 if chronic_load_28d > 0 else 0.0
 
     if chronic_load_avg <= 0.5:
         # Very low chronic load
-        acwr = 1.0 if acute_km == 0 else 1.5
+        acwr = 1.0 if acute_load == 0 else 1.5
     else:
-        acwr = round(acute_km / chronic_load_avg, 2)
+        acwr = round(acute_load / chronic_load_avg, 2)
 
     # Interpret ACWR
     if acwr < 0.8:
@@ -163,7 +301,7 @@ def calculate_acwr(activities: List[Dict[str, Any]], reference_date: Optional[da
 
     return {
         "acwr": acwr,
-        "acute_load_km": round(acute_km, 1),
+        "acute_load_km": round(acute_load, 1),
         "chronic_load_km": round(chronic_load_avg, 1),
         "status": status,
         "risk_level": risk_level,
@@ -205,7 +343,8 @@ def calculate_weekly_breakdown(activities: List[Dict[str, Any]]) -> List[Dict[st
             "elevation_gain": 0.0,
             "longest_run_km": 0.0,
             "avg_pace_seconds": 0.0,
-            "paces": []
+            "paces": [],
+            "by_sport": {}
         }
 
     for dt, a in dated_acts:
@@ -218,15 +357,26 @@ def calculate_weekly_breakdown(activities: List[Dict[str, Any]]) -> List[Dict[st
             km = (a.get("distance") or 0.0) / 1000.0
             time_sec = int(a.get("moving_time") or 0)
             elev = float(a.get("total_elevation_gain") or 0.0)
+            sport = classify_sport(a.get("type", ""))["sport_category"]
             
             weeks_dict[label]["total_km"] += km
             weeks_dict[label]["run_count"] += 1
             weeks_dict[label]["total_time_seconds"] += time_sec
             weeks_dict[label]["elevation_gain"] += elev
-            if km > weeks_dict[label]["longest_run_km"]:
-                weeks_dict[label]["longest_run_km"] = km
-            if km > 0 and time_sec > 0:
-                weeks_dict[label]["paces"].append(time_sec / km)
+            
+            if sport not in weeks_dict[label]["by_sport"]:
+                weeks_dict[label]["by_sport"][sport] = {"count": 0, "km": 0.0, "time_seconds": 0}
+            weeks_dict[label]["by_sport"][sport]["count"] += 1
+            weeks_dict[label]["by_sport"][sport]["km"] = round(weeks_dict[label]["by_sport"][sport]["km"] + km, 1)
+            weeks_dict[label]["by_sport"][sport]["time_seconds"] += time_sec
+
+            if sport == "run":
+                if km > weeks_dict[label]["longest_run_km"]:
+                    weeks_dict[label]["longest_run_km"] = km
+                if km > 0 and time_sec > 0:
+                    weeks_dict[label]["paces"].append(time_sec / km)
+            elif sport == "ride" and weeks_dict[label]["longest_run_km"] == 0.0:
+                pass
 
     result = []
     prev_km = 0.0
@@ -327,20 +477,26 @@ def calculate_race_predictions(activities: List[Dict[str, Any]]) -> Dict[str, An
 
 def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Computes chronological progress metrics and timeline for:
-    - Pace evolution over time (individual runs and 5-run rolling trendline)
+    Computes chronological multi-sport progress metrics and timeline for:
+    - Multi-sport timeline with custom sport metrics (Run pace, Ride speed km/h, Swim min/100m, Workout duration)
     - Aerobic Efficiency Factor (Speed m/min per Heart Rate bpm)
     - Average Heart Rate and Cadence trends
-    - Weekly and monthly aggregated progression
-    - Baseline vs Recent improvement deltas and diagnosis
+    - Sport distribution and cross-training volume
+    - Weekly and monthly multi-sport progression
+    - Baseline vs Recent improvement deltas and hybrid athlete diagnosis
     """
     if not activities:
         return {
             "timeline": [],
             "weekly": [],
             "monthly": [],
+            "sports_summary": [],
             "summary": {
                 "total_activities": 0,
+                "total_hours": 0.0,
+                "total_distance_km": 0.0,
+                "multi_sport_count": 0,
+                "primary_sport": "Nenhum",
                 "baseline_pace_formatted": "--:--",
                 "recent_pace_formatted": "--:--",
                 "pace_diff_seconds": 0.0,
@@ -353,28 +509,35 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
                 "cadence_diff": None,
                 "fastest_run": None,
                 "longest_run": None,
+                "longest_ride": None,
                 "verdict_headline": "Sem dados suficientes",
-                "verdict_text": "Registre seus treinos para visualizar seu gráfico de evolução temporal."
+                "verdict_text": "Registre seus treinos para visualizar seu gráfico de evolução temporal e multiesporte."
             }
         }
 
-    dated_runs = []
+    dated_acts = []
     for a in activities:
-        dist = float(a.get("distance") or 0.0)
+        dist_m = float(a.get("distance") or 0.0)
         time_s = int(a.get("moving_time") or 0)
-        if dist < 500 or time_s < 60:
+        # Keep activities with at least 1 min duration or at least 200m distance
+        if time_s < 60 and dist_m < 200:
             continue
         dt = parse_iso_date(a.get("start_date") or a.get("start_date_local"))
         if dt:
-            dated_runs.append((dt, a))
+            dated_acts.append((dt, a))
 
-    if not dated_runs:
+    if not dated_acts:
         return {
             "timeline": [],
             "weekly": [],
             "monthly": [],
+            "sports_summary": [],
             "summary": {
                 "total_activities": 0,
+                "total_hours": 0.0,
+                "total_distance_km": 0.0,
+                "multi_sport_count": 0,
+                "primary_sport": "Nenhum",
                 "baseline_pace_formatted": "--:--",
                 "recent_pace_formatted": "--:--",
                 "pace_diff_seconds": 0.0,
@@ -387,90 +550,175 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
                 "cadence_diff": None,
                 "fastest_run": None,
                 "longest_run": None,
+                "longest_ride": None,
                 "verdict_headline": "Sem dados válidos",
-                "verdict_text": "Nenhuma corrida com data e distância válidas foi encontrada."
+                "verdict_text": "Nenhum treino com data válida foi encontrado."
             }
         }
 
-    dated_runs.sort(key=lambda x: x[0])
+    dated_acts.sort(key=lambda x: x[0])
 
     timeline = []
-    paces_list = []
+    run_paces_list = []
+    ride_speeds_list = []
     eff_list = []
+    hr_list = []
 
-    for idx, (dt, a) in enumerate(dated_runs):
+    # Map of sports present
+    sports_map: Dict[str, Dict[str, Any]] = {}
+
+    for idx, (dt, a) in enumerate(dated_acts):
         dist_m = float(a.get("distance") or 0.0)
         time_s = int(a.get("moving_time") or 0)
         dist_km = round(dist_m / 1000.0, 2)
+        time_min = round(time_s / 60.0, 1)
+
+        sport_info = classify_sport(a.get("type", ""))
+        sport_cat = sport_info["sport_category"]
+
+        # Track sport counts & time
+        if sport_cat not in sports_map:
+            sports_map[sport_cat] = {
+                "sport_type": sport_info["sport_type"],
+                "sport_category": sport_cat,
+                "sport_label": sport_info["sport_label"],
+                "sport_icon": sport_info["sport_icon"],
+                "sport_color": sport_info["sport_color"],
+                "count": 0,
+                "total_time_seconds": 0,
+                "total_km": 0.0
+            }
+        sports_map[sport_cat]["count"] += 1
+        sports_map[sport_cat]["total_time_seconds"] += time_s
+        sports_map[sport_cat]["total_km"] = round(sports_map[sport_cat]["total_km"] + dist_km, 1)
+
+        # Pace & Speed
         pace_s = calculate_pace_seconds(dist_m, time_s)
-        speed_kmh = round((dist_km / (time_s / 3600.0)), 1) if time_s > 0 else 0.0
-        
+        speed_kmh = round((dist_km / (time_s / 3600.0)), 1) if (time_s > 0 and dist_km > 0) else 0.0
+        pace_formatted = format_sport_performance(sport_cat, dist_m, time_s)
+
+        # Heart rate & Cadence
         hr = a.get("average_heartrate")
         if hr is not None:
             hr = round(float(hr), 0)
             if hr <= 40 or hr > 230:
                 hr = None
-                
+        if hr:
+            hr_list.append(hr)
+
         cadence = a.get("average_cadence")
         if cadence is not None:
             cadence = round(float(cadence), 0)
-            if cadence <= 80:
+            if sport_cat == "run" and cadence <= 80:
                 cadence = None
 
         # Aerobic efficiency: speed in m/min divided by average heart rate
         aerobic_eff = None
-        if hr and hr > 50 and time_s > 0:
+        if hr and hr > 50 and time_s > 0 and dist_m > 0:
             speed_m_min = dist_m / (time_s / 60.0)
             aerobic_eff = round(speed_m_min / hr, 2)
-
-        # Category by distance
-        if dist_km < 6.0:
-            cat = "curta"
-        elif dist_km < 12.0:
-            cat = "media"
-        else:
-            cat = "longao"
-
-        paces_list.append(pace_s)
-        if aerobic_eff is not None:
             eff_list.append(aerobic_eff)
 
-        # 5-run rolling moving average of pace
-        window_paces = paces_list[max(0, idx - 4):idx + 1]
-        mov_avg_pace = round(statistics.mean(window_paces), 1) if window_paces else pace_s
+        # Activity Category (by distance or duration)
+        if sport_cat == "run":
+            if dist_km < 6.0: cat = "curta"
+            elif dist_km < 12.0: cat = "media"
+            else: cat = "longao"
+        elif sport_cat == "ride":
+            if dist_km < 25.0: cat = "curta"
+            elif dist_km < 55.0: cat = "media"
+            else: cat = "longao"
+        elif sport_cat == "swim":
+            if dist_m < 1000: cat = "curta"
+            elif dist_m < 2000: cat = "media"
+            else: cat = "longao"
+        else:
+            cat = "geral"
 
-        # 5-run rolling moving average of efficiency
-        window_eff = [t_item["aerobic_efficiency"] for t_item in timeline[max(0, idx - 4):idx] if t_item.get("aerobic_efficiency") is not None]
-        if aerobic_eff is not None:
-            window_eff.append(aerobic_eff)
-        mov_avg_eff = round(statistics.mean(window_eff), 2) if window_eff else None
+        # Moving Averages
+        if sport_cat == "run" and pace_s > 0:
+            run_paces_list.append(pace_s)
+            window_paces = run_paces_list[max(0, len(run_paces_list) - 5):]
+            mov_avg_pace = round(statistics.mean(window_paces), 1)
+            mov_avg_pace_formatted = format_pace(mov_avg_pace)
+        else:
+            mov_avg_pace = pace_s if pace_s > 0 else 0.0
+            mov_avg_pace_formatted = pace_formatted
+
+        if sport_cat == "ride" and speed_kmh > 0:
+            ride_speeds_list.append(speed_kmh)
+            window_speeds = ride_speeds_list[max(0, len(ride_speeds_list) - 5):]
+            mov_avg_speed = round(statistics.mean(window_speeds), 1)
+        else:
+            mov_avg_speed = speed_kmh
+
+        # Rolling Aerobic Efficiency (last 5 cardio efforts)
+        recent_effs = eff_list[max(0, len(eff_list) - 5):] if eff_list else []
+        mov_avg_eff = round(statistics.mean(recent_effs), 2) if recent_effs else None
+
+        # Rolling HR (last 5 efforts)
+        recent_hrs = hr_list[max(0, len(hr_list) - 5):] if hr_list else []
+        mov_avg_hr = round(statistics.mean(recent_hrs), 0) if recent_hrs else None
 
         date_formatted = dt.strftime("%d/%m")
         full_date = dt.strftime("%d/%m/%Y")
 
+        training_load = calculate_activity_load(a)
+
         timeline.append({
             "id": a.get("strava_id") or a.get("id") or str(idx),
-            "name": a.get("name") or "Corrida",
+            "name": a.get("name") or sport_info["sport_label"],
             "date": dt.isoformat(),
             "date_formatted": date_formatted,
             "full_date": full_date,
+            "sport_type": sport_info["sport_type"],
+            "sport_category": sport_cat,
+            "sport_label": sport_info["sport_label"],
+            "sport_icon": sport_info["sport_icon"],
+            "sport_color": sport_info["sport_color"],
+            "pace_unit": sport_info["pace_unit"],
+            "cadence_unit": sport_info["cadence_unit"],
             "distance_km": dist_km,
             "moving_time_seconds": time_s,
+            "moving_time_minutes": time_min,
+            "moving_time_formatted": format_duration(time_s),
             "pace_seconds": round(pace_s, 1),
-            "pace_formatted": format_pace(pace_s),
+            "pace_formatted": pace_formatted,
             "speed_kmh": speed_kmh,
             "average_heartrate": hr,
             "average_cadence": cadence,
             "aerobic_efficiency": aerobic_eff,
+            "training_load": training_load,
+            "total_elevation_gain": round(float(a.get("total_elevation_gain") or 0.0), 1),
             "category": cat,
             "moving_avg_pace_seconds": mov_avg_pace,
-            "moving_avg_pace_formatted": format_pace(mov_avg_pace),
-            "moving_avg_efficiency": mov_avg_eff
+            "moving_avg_pace_formatted": mov_avg_pace_formatted,
+            "moving_avg_speed_kmh": mov_avg_speed,
+            "moving_avg_efficiency": mov_avg_eff,
+            "moving_avg_hr": mov_avg_hr
+        })
+
+    # Prepare sports summary
+    total_time_all = sum(s["total_time_seconds"] for s in sports_map.values())
+    sports_summary = []
+    for sc, s_data in sorted(sports_map.items(), key=lambda x: x[1]["total_time_seconds"], reverse=True):
+        hours = round(s_data["total_time_seconds"] / 3600.0, 1)
+        pct = round((s_data["total_time_seconds"] / total_time_all * 100.0), 1) if total_time_all > 0 else 0.0
+        sports_summary.append({
+            "sport_type": s_data["sport_type"],
+            "sport_category": sc,
+            "sport_label": s_data["sport_label"],
+            "sport_icon": s_data["sport_icon"],
+            "sport_color": s_data["sport_color"],
+            "count": s_data["count"],
+            "total_time_hours": hours,
+            "total_km": s_data["total_km"],
+            "pct_time": pct
         })
 
     # Group by calendar week (Monday to Sunday)
     weeks_map = {}
-    for dt, a in dated_runs:
+    for dt, a in dated_acts:
         d = dt.date()
         w_start = d - timedelta(days=d.weekday())
         w_end = w_start + timedelta(days=6)
@@ -481,29 +729,42 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
                 "label": label,
                 "period": "Semana",
                 "start_date": w_key,
-                "runs": []
+                "activities": []
             }
-        weeks_map[w_key]["runs"].append(a)
+        weeks_map[w_key]["activities"].append(a)
 
     weekly = []
     for w_key in sorted(weeks_map.keys()):
         w_data = weeks_map[w_key]
-        r_list = w_data["runs"]
-        tot_km = sum((r.get("distance") or 0.0) / 1000.0 for r in r_list)
-        tot_time = sum(int(r.get("moving_time") or 0) for r in r_list)
-        paces = [calculate_pace_seconds(r.get("distance") or 0.0, r.get("moving_time") or 0) for r in r_list if (r.get("distance") or 0) > 0 and (r.get("moving_time") or 0) > 0]
-        hrs = [r["average_heartrate"] for r in r_list if r.get("average_heartrate") and r["average_heartrate"] > 40]
-        cads = [r["average_cadence"] for r in r_list if r.get("average_cadence") and r["average_cadence"] > 100]
+        act_list = w_data["activities"]
+        tot_km = sum((float(a.get("distance") or 0.0) / 1000.0) for a in act_list)
+        tot_time = sum(int(a.get("moving_time") or 0) for a in act_list)
+        hrs = [a["average_heartrate"] for a in act_list if a.get("average_heartrate") and a["average_heartrate"] > 40]
+        cads = [a["average_cadence"] for a in act_list if a.get("average_cadence") and a["average_cadence"] > 80]
         
-        avg_pace_s = (tot_time / tot_km) if tot_km > 0 else 0.0
-        best_pace_s = min(paces) if paces else 0.0
+        runs_in_w = [a for a in act_list if classify_sport(a.get("type", ""))["sport_category"] == "run"]
+        run_km = sum((float(r.get("distance") or 0.0) / 1000.0) for r in runs_in_w)
+        run_time = sum(int(r.get("moving_time") or 0) for r in runs_in_w)
+        run_paces = [calculate_pace_seconds(float(r.get("distance") or 0.0), int(r.get("moving_time") or 0)) for r in runs_in_w if (r.get("distance") or 0) > 0 and (r.get("moving_time") or 0) > 0]
         
+        avg_pace_s = (run_time / run_km) if run_km > 0 else 0.0
+        best_pace_s = min(run_paces) if run_paces else 0.0
+
+        by_sport = {}
+        for a in act_list:
+            sc = classify_sport(a.get("type", ""))["sport_category"]
+            if sc not in by_sport:
+                by_sport[sc] = {"count": 0, "km": 0.0, "hours": 0.0}
+            by_sport[sc]["count"] += 1
+            by_sport[sc]["km"] = round(by_sport[sc]["km"] + (float(a.get("distance") or 0.0) / 1000.0), 1)
+            by_sport[sc]["hours"] = round(by_sport[sc]["hours"] + (int(a.get("moving_time") or 0) / 3600.0), 2)
+
         effs = []
-        for r in r_list:
-            h = r.get("average_heartrate")
-            t = int(r.get("moving_time") or 0)
-            d = float(r.get("distance") or 0.0)
-            if h and h > 50 and t > 0:
+        for a in act_list:
+            h = a.get("average_heartrate")
+            t = int(a.get("moving_time") or 0)
+            d = float(a.get("distance") or 0.0)
+            if h and h > 50 and t > 0 and d > 0:
                 effs.append((d / (t / 60.0)) / h)
 
         weekly.append({
@@ -511,7 +772,9 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
             "period": "Semana",
             "start_date": w_key,
             "total_km": round(tot_km, 1),
-            "run_count": len(r_list),
+            "total_time_hours": round(tot_time / 3600.0, 1),
+            "run_count": len(act_list),
+            "total_sessions": len(act_list),
             "avg_pace_seconds": round(avg_pace_s, 1),
             "avg_pace_formatted": format_pace(avg_pace_s),
             "best_pace_seconds": round(best_pace_s, 1),
@@ -519,7 +782,8 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
             "avg_heartrate": round(statistics.mean(hrs), 0) if hrs else None,
             "avg_cadence": round(statistics.mean(cads), 0) if cads else None,
             "avg_efficiency": round(statistics.mean(effs), 2) if effs else None,
-            "longest_run_km": round(max((r.get("distance") or 0.0) / 1000.0 for r in r_list), 1) if r_list else 0.0
+            "longest_run_km": round(max((float(r.get("distance") or 0.0) / 1000.0 for r in runs_in_w), default=0.0), 1),
+            "by_sport": by_sport
         })
 
     # Group by calendar month
@@ -529,7 +793,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
         "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago",
         "09": "Set", "10": "Out", "11": "Nov", "12": "Dez"
     }
-    for dt, a in dated_runs:
+    for dt, a in dated_acts:
         m_key = dt.strftime("%Y-%m")
         m_label = f"{pt_months.get(dt.strftime('%m'), dt.strftime('%m'))}/{dt.strftime('%y')}"
         if m_key not in months_map:
@@ -537,29 +801,42 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
                 "label": m_label,
                 "period": "Mês",
                 "start_date": f"{m_key}-01",
-                "runs": []
+                "activities": []
             }
-        months_map[m_key]["runs"].append(a)
+        months_map[m_key]["activities"].append(a)
 
     monthly = []
     for m_key in sorted(months_map.keys()):
         m_data = months_map[m_key]
-        r_list = m_data["runs"]
-        tot_km = sum((r.get("distance") or 0.0) / 1000.0 for r in r_list)
-        tot_time = sum(int(r.get("moving_time") or 0) for r in r_list)
-        paces = [calculate_pace_seconds(r.get("distance") or 0.0, r.get("moving_time") or 0) for r in r_list if (r.get("distance") or 0) > 0 and (r.get("moving_time") or 0) > 0]
-        hrs = [r["average_heartrate"] for r in r_list if r.get("average_heartrate") and r["average_heartrate"] > 40]
-        cads = [r["average_cadence"] for r in r_list if r.get("average_cadence") and r["average_cadence"] > 100]
+        act_list = m_data["activities"]
+        tot_km = sum((float(a.get("distance") or 0.0) / 1000.0) for a in act_list)
+        tot_time = sum(int(a.get("moving_time") or 0) for a in act_list)
+        hrs = [a["average_heartrate"] for a in act_list if a.get("average_heartrate") and a["average_heartrate"] > 40]
+        cads = [a["average_cadence"] for a in act_list if a.get("average_cadence") and a["average_cadence"] > 80]
         
-        avg_pace_s = (tot_time / tot_km) if tot_km > 0 else 0.0
-        best_pace_s = min(paces) if paces else 0.0
+        runs_in_m = [a for a in act_list if classify_sport(a.get("type", ""))["sport_category"] == "run"]
+        run_km = sum((float(r.get("distance") or 0.0) / 1000.0) for r in runs_in_m)
+        run_time = sum(int(r.get("moving_time") or 0) for r in runs_in_m)
+        run_paces = [calculate_pace_seconds(float(r.get("distance") or 0.0), int(r.get("moving_time") or 0)) for r in runs_in_m if (r.get("distance") or 0) > 0 and (r.get("moving_time") or 0) > 0]
         
+        avg_pace_s = (run_time / run_km) if run_km > 0 else 0.0
+        best_pace_s = min(run_paces) if run_paces else 0.0
+
+        by_sport = {}
+        for a in act_list:
+            sc = classify_sport(a.get("type", ""))["sport_category"]
+            if sc not in by_sport:
+                by_sport[sc] = {"count": 0, "km": 0.0, "hours": 0.0}
+            by_sport[sc]["count"] += 1
+            by_sport[sc]["km"] = round(by_sport[sc]["km"] + (float(a.get("distance") or 0.0) / 1000.0), 1)
+            by_sport[sc]["hours"] = round(by_sport[sc]["hours"] + (int(a.get("moving_time") or 0) / 3600.0), 2)
+
         effs = []
-        for r in r_list:
-            h = r.get("average_heartrate")
-            t = int(r.get("moving_time") or 0)
-            d = float(r.get("distance") or 0.0)
-            if h and h > 50 and t > 0:
+        for a in act_list:
+            h = a.get("average_heartrate")
+            t = int(a.get("moving_time") or 0)
+            d = float(a.get("distance") or 0.0)
+            if h and h > 50 and t > 0 and d > 0:
                 effs.append((d / (t / 60.0)) / h)
 
         monthly.append({
@@ -567,7 +844,9 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
             "period": "Mês",
             "start_date": m_data["start_date"],
             "total_km": round(tot_km, 1),
-            "run_count": len(r_list),
+            "total_time_hours": round(tot_time / 3600.0, 1),
+            "run_count": len(act_list),
+            "total_sessions": len(act_list),
             "avg_pace_seconds": round(avg_pace_s, 1),
             "avg_pace_formatted": format_pace(avg_pace_s),
             "best_pace_seconds": round(best_pace_s, 1),
@@ -575,41 +854,60 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
             "avg_heartrate": round(statistics.mean(hrs), 0) if hrs else None,
             "avg_cadence": round(statistics.mean(cads), 0) if cads else None,
             "avg_efficiency": round(statistics.mean(effs), 2) if effs else None,
-            "longest_run_km": round(max((r.get("distance") or 0.0) / 1000.0 for r in r_list), 1) if r_list else 0.0
+            "longest_run_km": round(max((float(r.get("distance") or 0.0) / 1000.0 for r in runs_in_m), default=0.0), 1),
+            "by_sport": by_sport
         })
 
     # Summary and Deltas
     total_acts = len(timeline)
-    sample_size = max(1, min(6, total_acts // 3)) if total_acts >= 3 else 1
+    total_hours = round(sum(p["moving_time_seconds"] for p in timeline) / 3600.0, 1)
+    total_distance_km = round(sum(p["distance_km"] for p in timeline), 1)
+    multi_sport_count = len(sports_map)
+    primary_sport = sports_summary[0]["sport_label"] if sports_summary else "Corrida"
 
-    baseline_pts = timeline[:sample_size]
-    recent_pts = timeline[-sample_size:]
+    # Running pace comparison (baseline vs recent)
+    runs_pts = [p for p in timeline if p["sport_category"] == "run" and p["pace_seconds"] > 0]
+    sample_size_run = max(1, min(6, len(runs_pts) // 3)) if len(runs_pts) >= 3 else 1
+    base_run_pts = runs_pts[:sample_size_run]
+    rec_run_pts = runs_pts[-sample_size_run:]
 
-    base_paces = [p["pace_seconds"] for p in baseline_pts if p["pace_seconds"] > 0]
-    rec_paces = [p["pace_seconds"] for p in recent_pts if p["pace_seconds"] > 0]
-
+    base_paces = [p["pace_seconds"] for p in base_run_pts if p["pace_seconds"] > 0]
+    rec_paces = [p["pace_seconds"] for p in rec_run_pts if p["pace_seconds"] > 0]
     base_pace_avg = statistics.mean(base_paces) if base_paces else 0.0
     rec_pace_avg = statistics.mean(rec_paces) if rec_paces else 0.0
 
     pace_diff = round(rec_pace_avg - base_pace_avg, 1) # negative means faster
     pace_pct = round(((base_pace_avg - rec_pace_avg) / base_pace_avg) * 100.0, 1) if base_pace_avg > 0 else 0.0
 
-    base_effs = [p["aerobic_efficiency"] for p in baseline_pts if p["aerobic_efficiency"] is not None]
-    rec_effs = [p["aerobic_efficiency"] for p in recent_pts if p["aerobic_efficiency"] is not None]
+    # Cycling speed comparison
+    ride_pts = [p for p in timeline if p["sport_category"] == "ride" and p["speed_kmh"] > 0]
+    sample_size_ride = max(1, min(5, len(ride_pts) // 3)) if len(ride_pts) >= 3 else 1
+    base_ride_pts = ride_pts[:sample_size_ride]
+    rec_ride_pts = ride_pts[-sample_size_ride:]
+    base_speed_avg = round(statistics.mean([p["speed_kmh"] for p in base_ride_pts]), 1) if base_ride_pts else None
+    rec_speed_avg = round(statistics.mean([p["speed_kmh"] for p in rec_ride_pts]), 1) if rec_ride_pts else None
+    speed_diff = round(rec_speed_avg - base_speed_avg, 1) if (base_speed_avg and rec_speed_avg) else None
+    speed_pct = round(((rec_speed_avg - base_speed_avg) / base_speed_avg) * 100.0, 1) if (base_speed_avg and rec_speed_avg and base_speed_avg > 0) else None
 
+    # Aerobic efficiency comparison
+    eff_pts = [p["aerobic_efficiency"] for p in timeline if p["aerobic_efficiency"] is not None]
+    sample_size_eff = max(1, min(6, len(eff_pts) // 3)) if len(eff_pts) >= 3 else 1
+    base_effs = eff_pts[:sample_size_eff]
+    rec_effs = eff_pts[-sample_size_eff:]
     base_eff_avg = round(statistics.mean(base_effs), 2) if base_effs else None
     rec_eff_avg = round(statistics.mean(rec_effs), 2) if rec_effs else None
     eff_pct = round(((rec_eff_avg - base_eff_avg) / base_eff_avg) * 100.0, 1) if base_eff_avg and rec_eff_avg and base_eff_avg > 0 else None
 
-    base_cads = [p["average_cadence"] for p in baseline_pts if p["average_cadence"] is not None]
-    rec_cads = [p["average_cadence"] for p in recent_pts if p["average_cadence"] is not None]
+    # Cadence comparison (runs)
+    base_cads = [p["average_cadence"] for p in base_run_pts if p["average_cadence"] is not None]
+    rec_cads = [p["average_cadence"] for p in rec_run_pts if p["average_cadence"] is not None]
     base_cad_avg = round(statistics.mean(base_cads), 0) if base_cads else None
     rec_cad_avg = round(statistics.mean(rec_cads), 0) if rec_cads else None
     cad_diff = round(rec_cad_avg - base_cad_avg, 0) if base_cad_avg and rec_cad_avg else None
 
-    # Fastest run (minimum 2.5km)
-    valid_fast = [p for p in timeline if p["distance_km"] >= 2.5 and p["pace_seconds"] > 0]
-    fastest = min(valid_fast, key=lambda x: x["pace_seconds"]) if valid_fast else (timeline[0] if timeline else None)
+    # Fastest run
+    valid_fast = [p for p in runs_pts if p["distance_km"] >= 2.5 and p["pace_seconds"] > 0]
+    fastest = min(valid_fast, key=lambda x: x["pace_seconds"]) if valid_fast else (runs_pts[0] if runs_pts else None)
     fastest_info = {
         "name": fastest["name"],
         "date": fastest["date_formatted"],
@@ -618,36 +916,70 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
     } if fastest else None
 
     # Longest run
-    longest = max(timeline, key=lambda x: x["distance_km"]) if timeline else None
-    longest_info = {
-        "name": longest["name"],
-        "date": longest["date_formatted"],
-        "distance_km": longest["distance_km"],
-        "pace": longest["pace_formatted"]
-    } if longest else None
+    longest_r = max(runs_pts, key=lambda x: x["distance_km"]) if runs_pts else None
+    longest_run_info = {
+        "name": longest_r["name"],
+        "date": longest_r["date_formatted"],
+        "distance_km": longest_r["distance_km"],
+        "pace": longest_r["pace_formatted"]
+    } if longest_r else None
 
-    # Formulate diagnosis verdict
-    if total_acts < 3:
-        verdict_hl = "Início do Monitoramento"
-        verdict_msg = "Você começou a registrar seus treinos. Com pelo menos 5 corridas, calcularemos a curva precisa de evolução e eficiência aeróbica."
-    elif pace_diff <= -8.0 or (eff_pct is not None and eff_pct >= 4.0):
-        verdict_hl = "Evolução Positiva Expressiva 🚀"
-        diff_text = f"{abs(int(pace_diff))}s/km mais veloz" if pace_diff < 0 else ""
-        eff_text = f" com ganho de +{eff_pct}% na eficiência cardíaca" if eff_pct and eff_pct > 0 else ""
-        verdict_msg = f"Seu rendimento evoluiu claramente ao longo do período analisado! Você está correndo com ritmo cerca de {diff_text}{eff_text} em relação ao seu início."
-    elif pace_diff >= 8.0:
-        verdict_hl = "Fase de Volume & Construção Aeróbica 🧱"
-        verdict_msg = "Seu ritmo médio recente foi mais controlado e cadenciado, típico de ciclos focados em aumento de volume semanal ou recuperação ativa."
+    # Longest ride
+    longest_bike = max(ride_pts, key=lambda x: x["distance_km"]) if ride_pts else None
+    longest_ride_info = {
+        "name": longest_bike["name"],
+        "date": longest_bike["date_formatted"],
+        "distance_km": longest_bike["distance_km"],
+        "speed": f"{longest_bike['speed_kmh']} km/h"
+    } if longest_bike else None
+
+    # Formulate multi-sport diagnosis verdict
+    sports_names = [s["sport_label"] for s in sports_summary]
+    sports_str = ", ".join(sports_names[:3])
+    if multi_sport_count > 1:
+        if pace_diff <= -6.0 or (eff_pct is not None and eff_pct >= 3.0) or (speed_pct is not None and speed_pct >= 3.0):
+            verdict_hl = "Evolução Multiesporte Expressiva 🚀"
+            diff_text = f"ganho de {abs(int(pace_diff))}s/km na corrida" if pace_diff < 0 else ""
+            eff_text = f" e +{eff_pct}% de eficiência cardíaca" if eff_pct and eff_pct > 0 else ""
+            verdict_msg = f"Seu treinamento híbrido está gerando excelentes resultados! Você acumula {total_hours}h em {multi_sport_count} modalidades ({sports_str}), combinando resistência com baixo impacto articular. Há evolução nítida de rendimento ({diff_text}{eff_text})."
+        elif total_acts < 5:
+            verdict_hl = "Início do Monitoramento Multiesporte 🌐"
+            verdict_msg = f"Você já tem registros em {multi_sport_count} modalidades ({sports_str}). Conforme novos treinos forem sincronizados, traçaremos curvas de velocidade e eficiência específicas para cada esporte."
+        else:
+            verdict_hl = "Condicionamento Híbrido Equilibrado ⚖️"
+            verdict_msg = f"Excelente rotina multiesporte ({sports_str}) totalizando {total_hours}h. O cross-training preserva joelhos e tendões enquanto constrói uma capacidade cardiovascular global sólida."
     else:
-        verdict_hl = "Rendimento Consistente & Estável ⚖️"
-        verdict_msg = "Você mantém um ritmo e esforço homogêneos ao longo dos treinos, demonstrando boa regularidade e controle da intensidade aeróbica."
+        # Single sport (mostly run)
+        if total_acts < 3:
+            verdict_hl = "Início do Monitoramento"
+            verdict_msg = "Você começou a registrar seus treinos. Com pelo menos 5 atividades, calcularemos a curva precisa de evolução e eficiência aeróbica."
+        elif pace_diff <= -8.0 or (eff_pct is not None and eff_pct >= 4.0):
+            verdict_hl = "Evolução Positiva Expressiva 🚀"
+            diff_text = f"{abs(int(pace_diff))}s/km mais veloz" if pace_diff < 0 else ""
+            eff_text = f" com ganho de +{eff_pct}% na eficiência cardíaca" if eff_pct and eff_pct > 0 else ""
+            verdict_msg = f"Seu rendimento evoluiu claramente ao longo do período analisado! Você está se exercitando com ritmo cerca de {diff_text}{eff_text} em relação ao seu início."
+        elif pace_diff >= 8.0:
+            verdict_hl = "Fase de Volume & Construção Aeróbica 🧱"
+            verdict_msg = "Seu ritmo médio recente foi mais controlado e cadenciado, típico de ciclos focados em aumento de volume semanal ou recuperação ativa."
+        else:
+            verdict_hl = "Rendimento Consistente & Estável ⚖️"
+            verdict_msg = "Você mantém um ritmo e esforço homogêneos ao longo dos treinos, demonstrando boa regularidade e controle da intensidade aeróbica."
 
     summary = {
         "total_activities": total_acts,
+        "total_hours": total_hours,
+        "total_distance_km": total_distance_km,
+        "multi_sport_count": multi_sport_count,
+        "primary_sport": primary_sport,
+        "sports_distribution": sports_summary,
         "baseline_pace_formatted": format_pace(base_pace_avg),
         "recent_pace_formatted": format_pace(rec_pace_avg),
         "pace_diff_seconds": pace_diff,
         "pace_improvement_pct": pace_pct,
+        "baseline_speed_kmh": base_speed_avg,
+        "recent_speed_kmh": rec_speed_avg,
+        "speed_diff_kmh": speed_diff,
+        "speed_improvement_pct": speed_pct,
         "baseline_efficiency": base_eff_avg,
         "recent_efficiency": rec_eff_avg,
         "efficiency_improvement_pct": eff_pct,
@@ -655,7 +987,8 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
         "recent_cadence": rec_cad_avg,
         "cadence_diff": cad_diff,
         "fastest_run": fastest_info,
-        "longest_run": longest_info,
+        "longest_run": longest_run_info,
+        "longest_ride": longest_ride_info,
         "verdict_headline": verdict_hl,
         "verdict_text": verdict_msg
     }
@@ -664,6 +997,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
         "timeline": timeline,
         "weekly": weekly,
         "monthly": monthly,
+        "sports_summary": sports_summary,
         "summary": summary
     }
 
@@ -815,38 +1149,66 @@ def generate_coaching_insights(
             "expected_gain": "Ganhos exponenciais de condicionamento sem aumentar a fadiga diária."
         })
 
+    # 6. ANALYZE MULTI-SPORT & CROSS-TRAINING SYNERGY
+    sport_cats = set()
+    for a in activities:
+        sc = classify_sport(a.get("type", ""))["sport_category"]
+        sport_cats.add(sc)
+
+    if len(sport_cats) >= 2:
+        other_sports = [s for s in sport_cats if s != "run"]
+        labels = [classify_sport(s)["sport_label"] for s in other_sports]
+        labels_str = ", ".join(labels)
+        insights.append({
+            "id": "cross_training_synergy",
+            "category": "consistencia",
+            "severity": "good",
+            "title": "Excelente Sinergia de Treinamento Cruzado (Cross-Training)",
+            "subtitle": f"Você combina corrida com {labels_str}",
+            "problem": None,
+            "action": "Continue intercalando treinos sem impacto articular (como bike, natação e fortalecimento) com a corrida. Isso mantém o volume cardíaco elevado ao mesmo tempo em que previne canelites e tendinopatias.",
+            "expected_gain": "VO2máx elevado, regeneração tecidual mais rápida e longevidade esportiva."
+        })
+
     return insights
 
 def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str, Any]) -> Dict[str, Any]:
     """
     Main analytics aggregator: combines all algorithms into a complete dashboard payload.
+    Supports multi-sport tracking (Run, Ride, Swim, Walk, Strength) with specialized progress timelines.
     """
     max_hr = int(settings.get("max_hr") or 190)
     rest_hr = int(settings.get("rest_hr") or 55)
     zones = get_hr_zones(max_hr, rest_hr)
 
-    # Filter only runs
-    runs = [a for a in activities if "run" in str(a.get("type", "")).lower() or a.get("type") == "Run"]
+    # Filter runs specifically for running race predictor & run biomechanics
+    runs = [a for a in activities if classify_sport(a.get("type", ""))["sport_category"] == "run"]
     if not runs and activities:
         runs = activities # fallback
 
     total_runs = len(runs)
     total_distance_m = sum(float(a.get("distance") or 0.0) for a in runs)
     total_time_s = sum(int(a.get("moving_time") or 0) for a in runs)
-    total_elevation_m = sum(float(a.get("total_elevation_gain") or 0.0) for a in runs)
+    
+    # All activities totals
+    total_all_time_s = sum(int(a.get("moving_time") or 0) for a in activities)
+    total_all_dist_m = sum(float(a.get("distance") or 0.0) for a in activities)
+    total_elevation_m = sum(float(a.get("total_elevation_gain") or 0.0) for a in activities)
 
     overall_pace_s = (total_time_s / (total_distance_m / 1000.0)) if total_distance_m > 0 else 0.0
     overall_pace_formatted = format_pace(overall_pace_s)
 
-    # Heart Rate & Zones Breakdown
+    # Heart Rate & Zones Breakdown across all cardio activities
     hr_counts = {"Z1": 0, "Z2": 0, "Z3": 0, "Z4": 0, "Z5": 0}
     hr_km = {"Z1": 0.0, "Z2": 0.0, "Z3": 0.0, "Z4": 0.0, "Z5": 0.0}
     runs_with_hr = 0
     all_avg_hrs = []
 
-    for a in runs:
+    for a in activities:
         avg_hr = a.get("average_heartrate")
-        km = (a.get("distance") or 0.0) / 1000.0
+        km = (float(a.get("distance") or 0.0)) / 1000.0
+        if km <= 0:
+            km = (int(a.get("moving_time") or 0) / 60.0) * 0.10
         if avg_hr and avg_hr > 50:
             runs_with_hr += 1
             all_avg_hrs.append(avg_hr)
@@ -868,7 +1230,7 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
             "percentage": pct
         }
 
-    # Cadence Stats
+    # Running Cadence Stats
     cadences = [float(a["average_cadence"]) for a in runs if a.get("average_cadence") and a["average_cadence"] > 100]
     avg_cadence = round(statistics.mean(cadences), 1) if cadences else None
     cadence_stats = {
@@ -877,17 +1239,16 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
         "status": "Ideal (170-185)" if avg_cadence and 170 <= avg_cadence <= 185 else ("Atenção (<162)" if avg_cadence and avg_cadence < 162 else "Normal")
     }
 
-    # ACWR
-    acwr_data = calculate_acwr(runs)
+    # ACWR calculated taking all activities (running, cycling, swimming, gym) into account!
+    acwr_data = calculate_acwr(activities)
 
-    # Weekly Breakdown
-    weekly_breakdown = calculate_weekly_breakdown(runs)
+    # Weekly Breakdown with multi-sport breakdown
+    weekly_breakdown = calculate_weekly_breakdown(activities)
 
-    # Race Predictions
+    # Race Predictions (specifically calibrated for running)
     race_predictions = calculate_race_predictions(runs)
 
     # Performance Score (Librun Index)
-    # 0 to 100 composite score
     score_components = {}
     
     # 1. ACWR score (max 25)
@@ -927,12 +1288,12 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
     score_components["cadencia"] = cad_score
 
     # 4. Consistency score (max 25)
-    recent_runs = sum(w["run_count"] for w in weekly_breakdown[-4:]) if weekly_breakdown else 0
-    if recent_runs >= 12:
+    recent_sessions = sum(w.get("run_count", 0) for w in weekly_breakdown[-4:]) if weekly_breakdown else 0
+    if recent_sessions >= 12:
         const_score = 25
-    elif recent_runs >= 8:
+    elif recent_sessions >= 8:
         const_score = 20
-    elif recent_runs >= 4:
+    elif recent_sessions >= 4:
         const_score = 15
     else:
         const_score = 10
@@ -940,9 +1301,9 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
 
     librun_score = sum(score_components.values())
 
-    # Generate personalized recommendations
+    # Generate personalized recommendations with multi-sport awareness
     insights = generate_coaching_insights(
-        activities=runs,
+        activities=activities,
         settings=settings,
         acwr_data=acwr_data,
         weekly_data=weekly_breakdown,
@@ -950,11 +1311,15 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
         cadence_stats=cadence_stats
     )
 
+    # Multi-sport progress timeline analytics
+    progress_analytics = calculate_progress_analytics(activities)
+
     return {
         "summary": {
             "total_runs": total_runs,
-            "total_distance_km": round(total_distance_m / 1000.0, 1),
-            "total_time_hours": round(total_time_s / 3600.0, 1),
+            "total_activities": len(activities),
+            "total_distance_km": round(total_all_dist_m / 1000.0, 1),
+            "total_time_hours": round(total_all_time_s / 3600.0, 1),
             "total_elevation_gain_m": round(total_elevation_m, 0),
             "overall_avg_pace": overall_pace_formatted,
             "overall_avg_pace_seconds": round(overall_pace_s, 1),
@@ -969,5 +1334,5 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
         "weekly_breakdown": weekly_breakdown,
         "race_predictions": race_predictions,
         "coaching_insights": insights,
-        "progress": calculate_progress_analytics(runs)
+        "progress": progress_analytics
     }

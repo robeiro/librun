@@ -178,11 +178,11 @@ async def upload_activity_file(file: UploadFile = File(...)):
 
 @app.post("/api/activities/sample")
 def populate_sample_data():
-    """Generates realistic sample running activities for instant analysis."""
+    """Generates realistic sample multi-sport activities for instant analysis."""
     count = seed_sample_activities(clear_existing=True)
     return {
         "success": True,
-        "message": f"Base de exemplo carregada com {count} atividades de corrida ao longo de 10 semanas.",
+        "message": f"Base de exemplo carregada com {count} atividades multiesportivas ao longo de 10 semanas.",
         "count": count
     }
 

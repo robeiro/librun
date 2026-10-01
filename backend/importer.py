@@ -28,12 +28,7 @@ def parse_strava_csv(file_content: bytes) -> Tuple[int, int]:
         act_name = row.get("Activity Name") or row.get("Nome da atividade") or row.get("name") or "Corrida"
         act_type = row.get("Activity Type") or row.get("Tipo de atividade") or row.get("type") or "Run"
         
-        # Only keep run activities or if user uploaded run files
-        act_type_lower = act_type.lower()
-        if "run" not in act_type_lower and "corrida" not in act_type_lower and "walk" not in act_type_lower and "hike" not in act_type_lower:
-            # Skip bikes, swims, etc. for running focus unless it's generic
-            if act_type not in ["Run", "TrailRun", "VirtualRun", "Track"]:
-                continue
+        # Keep all sports (Run, Ride, Swim, Walk, Hike, WeightTraining, Workout, etc.)
 
         # Date parsing
         date_str = (
