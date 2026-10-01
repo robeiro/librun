@@ -12,10 +12,19 @@ export const RacePredictor: React.FC<RacePredictorProps> = ({ predictionsData })
   const preds = predictionsData?.predictions;
   const ref = predictionsData?.reference_activity;
 
-  if (!preds || Object.keys(preds).length === 0) {
+  // Sanity check: ensure predicted times and reference efforts are physiologically realistic
+  const isPlausible = React.useMemo(() => {
+    if (!preds || Object.keys(preds).length === 0) return false;
+    const fiveKSecs = preds["5k"]?.predicted_time_seconds;
+    if (fiveKSecs && fiveKSecs < 720) return false; // 5k under 12 minutes is physically impossible for mortals
+    if (ref?.pace && (ref.pace.startsWith("0:") || ref.pace.startsWith("1:"))) return false; // Pace < 2:00/km is glitched
+    return true;
+  }, [preds, ref]);
+
+  if (!preds || Object.keys(preds).length === 0 || !isPlausible) {
     return (
       <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-500 dark:text-slate-400 shadow-sm">
-        {predictionsData?.message || "Dados insuficientes para prever tempos de prova (faça ao menos uma corrida de 3km ou mais em ritmo fisiológico realista)."}
+        {predictionsData?.message || "Dados insuficientes ou inconsistentes para prever tempos de prova (faça ao menos uma corrida de 3km ou mais em ritmo fisiológico realista)."}
       </div>
     );
   }

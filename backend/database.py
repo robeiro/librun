@@ -117,6 +117,15 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_athlete_id ON activities (athlete_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_analyses_type_target ON ai_analyses (analysis_type, target_id)")
 
+    # Data fix migration: if any activity has distance >= 1500m and moving_time <= 240s,
+    # it was imported with moving_time in minutes from legacy Strava CSV import.
+    cursor.execute("""
+    UPDATE activities 
+    SET moving_time = CAST(moving_time * 60 AS INTEGER),
+        average_speed = CASE WHEN (moving_time * 60) > 0 THEN distance / (moving_time * 60) ELSE average_speed END
+    WHERE distance >= 1500.0 AND moving_time > 0 AND moving_time <= 240
+    """)
+
     conn.commit()
     conn.close()
 

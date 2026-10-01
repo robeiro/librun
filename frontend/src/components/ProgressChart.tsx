@@ -6,10 +6,6 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -110,11 +106,27 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
-  const [selectedSport, setSelectedSport] = useState<SportFilterType>("all");
+  // Find primary sport or default to 'run' if running activities exist
+  const defaultSport = useMemo(() => {
+    if (!progress?.timeline?.length) return "run";
+    const hasRun = progress.timeline.some((p) => (p.sport_category || "run") === "run");
+    if (hasRun) return "run";
+    const firstSport = progress.sports_summary?.[0]?.sport_category;
+    return firstSport || "run";
+  }, [progress]);
+
+  const [selectedSport, setSelectedSport] = useState<SportFilterType>(defaultSport);
   const [metric, setMetric] = useState<MetricType>("pace");
   const [aggregation, setAggregation] = useState<AggregationType>("session");
   const [distanceFilter, setDistanceFilter] = useState<DistanceFilterType>("all");
   const [showTrendline, setShowTrendline] = useState<boolean>(true);
+
+  // Sync selectedSport on initial data load
+  useEffect(() => {
+    if (defaultSport) {
+      setSelectedSport((prev) => (prev === "all" ? defaultSport : prev));
+    }
+  }, [defaultSport]);
 
   // Available sports in this athlete's data
   const availableSports = useMemo(() => {
@@ -149,7 +161,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
 
   // Adjust default metric when sport changes
   useEffect(() => {
-    if (selectedSport === "run") {
+    if (selectedSport === "run" || selectedSport === "walk") {
       setMetric("pace");
     } else if (selectedSport === "ride") {
       setMetric("speed");
@@ -157,6 +169,8 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
       setMetric("pace");
     } else if (selectedSport === "workout") {
       setMetric("duration");
+    } else {
+      setMetric("pace");
     }
   }, [selectedSport]);
 
@@ -278,6 +292,18 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
       });
     }
   }, [progress, aggregation, selectedSport, distanceFilter]);
+
+  // Date range info for the historical timeline ("desde quando comecei")
+  const dateRangeNotice = useMemo(() => {
+    if (!chartData || chartData.length === 0) return null;
+    const firstDate = chartData[0]?.chartX;
+    const lastDate = chartData[chartData.length - 1]?.chartX;
+    return {
+      firstDate,
+      lastDate,
+      totalSessions: chartData.length,
+    };
+  }, [chartData]);
 
   const summary = progress?.summary;
   const hasData = Boolean(progress && (progress.timeline?.length || progress.weekly?.length) && summary);
@@ -441,16 +467,23 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
               <TrendingUp className="w-4 h-4" />
             </div>
             <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-              Linha do Tempo de Evolução & Progresso
+              Gráfico de Linha de Evolução & Progresso
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl">
-            Acompanhe a sua evolução cronológica treino a treino em todos os esportes que você pratica: ritmo de corrida, velocidade no pedal, natação, treinos de força e economia cardíaca.
+            Acompanhe a sua evolução em linha desde o primeiro registro até hoje. Selecione a modalidade abaixo para alternar os dados de ritmo, velocidade ou eficiência cardíaca.
           </p>
         </div>
 
         {/* Badges */}
         <div className="flex items-center flex-wrap gap-2 self-start md:self-auto">
+          {dateRangeNotice && (
+            <div className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-3 py-1.5 flex items-center space-x-1.5 text-xs text-slate-700 dark:text-slate-300">
+              <Calendar className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Histórico: <strong>{dateRangeNotice.firstDate}</strong> até hoje ({dateRangeNotice.totalSessions} treinos)</span>
+            </div>
+          )}
+
           <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl px-3 py-1.5 flex items-center space-x-2 text-xs text-emerald-700 dark:text-emerald-300 shadow-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-bold">Linha de Tendência Móvel Ativa</span>
@@ -466,56 +499,56 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
       </div>
 
       {/* 2. Multi-Sport Filter Toolbar */}
-      <div className="space-y-3 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800/80">
+      <div className="space-y-3 bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800/80">
         <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
-          <div className="flex items-center space-x-1.5 text-slate-600 dark:text-slate-300 font-semibold">
+          <div className="flex items-center space-x-1.5 text-slate-700 dark:text-slate-200 font-bold">
             <Layers3 className="w-4 h-4 text-emerald-500" />
-            <span>Modalidade Esportiva:</span>
+            <span>Escolha o Esporte (o gráfico de linha muda imediatamente):</span>
           </div>
           <span className="text-[11px] text-slate-400">
             {summary.multi_sport_count && summary.multi_sport_count > 1
-              ? `Atleta Multiesporte (${summary.multi_sport_count} modalidades registradas)`
-              : "Filtrar por esporte"}
+              ? `Atleta Multiesporte (${summary.multi_sport_count} modalidades)`
+              : "Alternar modalidade"}
           </span>
         </div>
 
         {/* Sport Pills */}
         <div className="flex items-center flex-wrap gap-2">
-          <button
-            onClick={() => setSelectedSport("all")}
-            className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
-              selectedSport === "all"
-                ? "bg-slate-900 text-white dark:bg-emerald-500 dark:text-slate-950 shadow-sm"
-                : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-            }`}
-          >
-            <span>🌐</span>
-            <span>Todos os Esportes</span>
-            <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
-              {summary.total_activities}
-            </span>
-          </button>
-
           {availableSports.map((sp) => {
             const isSelected = selectedSport === sp.sport_category;
             return (
               <button
                 key={sp.sport_category}
                 onClick={() => setSelectedSport(sp.sport_category)}
-                className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
+                className={`py-2 px-3.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 ${
                   isSelected
-                    ? "bg-emerald-500 text-slate-950 shadow-sm"
+                    ? "bg-emerald-500 text-slate-950 shadow-md ring-2 ring-emerald-500/30 font-extrabold"
                     : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
                 }`}
               >
-                <span>{sp.sport_icon}</span>
+                <span className="text-sm">{sp.sport_icon}</span>
                 <span>{sp.sport_label}</span>
-                <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"}`}>
                   {sp.count}
                 </span>
               </button>
             );
           })}
+
+          <button
+            onClick={() => setSelectedSport("all")}
+            className={`py-2 px-3.5 rounded-xl text-xs font-bold transition flex items-center space-x-2 ${
+              selectedSport === "all"
+                ? "bg-slate-900 text-white dark:bg-emerald-500 dark:text-slate-950 shadow-md ring-2 ring-emerald-500/30 font-extrabold"
+                : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            }`}
+          >
+            <span>🌐</span>
+            <span>Todos os Esportes</span>
+            <span className={`ml-1 text-[10px] px-1.5 py-0.2 rounded-full ${selectedSport === "all" ? "bg-slate-800 text-white dark:bg-emerald-600 dark:text-white" : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200"}`}>
+              {summary.total_activities}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -1020,14 +1053,8 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
               )}
             </LineChart>
           ) : metric === "duration" ? (
-            /* DURATION (Universal Multi-Sport) */
-            <AreaChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <defs>
-                <linearGradient id="colorDuration" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
+            /* DURATION (Universal Multi-Sport Line Chart) */
+            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
               <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
               <YAxis
@@ -1043,14 +1070,14 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 height={32}
                 formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
               />
-              <Area
+              <Line
                 type="monotone"
                 dataKey="valDurationHours"
-                name="Horas de Treino"
-                stroke="#10b981"
-                strokeWidth={2.5}
-                fillOpacity={1}
-                fill="url(#colorDuration)"
+                name="Horas do Treino"
+                stroke="#0ea5e9"
+                strokeWidth={1.8}
+                dot={{ r: 3.5, fill: "#0ea5e9" }}
+                activeDot={{ r: 6, fill: "#0284c7" }}
                 connectNulls
               />
               {aggregation === "session" && showTrendline && (
@@ -1058,34 +1085,33 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                   type="monotone"
                   dataKey="valMovingAvgDurationHours"
                   name="Linha de Tendência Móvel (Horas)"
-                  stroke="#0284c7"
+                  stroke="#10b981"
                   strokeWidth={3}
                   dot={false}
                   connectNulls
                 />
               )}
-            </AreaChart>
+            </LineChart>
           ) : metric === "efficiency" ? (
-            /* AEROBIC EFFICIENCY */
-            <AreaChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <defs>
-                <linearGradient id="colorEff" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
+            /* AEROBIC EFFICIENCY (Line Chart) */
+            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
               <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
               <YAxis stroke={axisStroke} fontSize={11} tickLine={false} unit=" m/bpm" domain={["auto", "auto"]} />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Area
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
+              <Line
                 type="monotone"
                 dataKey="valEfficiency"
                 name="Fator de Eficiência"
-                stroke="#10b981"
-                strokeWidth={2.5}
-                fillOpacity={1}
-                fill="url(#colorEff)"
+                stroke="#06b6d4"
+                strokeWidth={1.8}
+                dot={{ r: 3.5, fill: "#06b6d4" }}
+                activeDot={{ r: 6, fill: "#0891b2" }}
                 connectNulls
               />
               {aggregation === "session" && (
@@ -1093,47 +1119,40 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                   type="monotone"
                   dataKey="valMovingAvgEfficiency"
                   name="Tendência Média Móvel"
-                  stroke="#06b6d4"
-                  strokeWidth={2}
+                  stroke="#10b981"
+                  strokeWidth={3}
                   strokeDasharray="3 3"
                   dot={false}
                   connectNulls
                 />
               )}
-            </AreaChart>
+            </LineChart>
           ) : metric === "heartrate" ? (
-            /* HEART RATE */
-            <AreaChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <defs>
-                <linearGradient id="colorHr" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
+            /* HEART RATE (Line Chart) */
+            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
               <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
               <YAxis stroke={axisStroke} fontSize={11} tickLine={false} unit=" bpm" domain={["auto", "auto"]} />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Area
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
+              <Line
                 type="monotone"
                 dataKey="valHeartRate"
                 name="FC Média"
                 stroke="#f43f5e"
-                strokeWidth={2.5}
-                fillOpacity={1}
-                fill="url(#colorHr)"
+                strokeWidth={1.8}
+                dot={{ r: 3.5, fill: "#f43f5e" }}
+                activeDot={{ r: 6, fill: "#e11d48" }}
                 connectNulls
               />
-            </AreaChart>
+            </LineChart>
           ) : metric === "cadence" ? (
-            /* CADENCE */
-            <AreaChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <defs>
-                <linearGradient id="colorCad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
+            /* CADENCE (Line Chart) */
+            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
               <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
               <YAxis
@@ -1144,29 +1163,48 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 domain={selectedSport === "ride" ? [60, 110] : [140, 195]}
               />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
               {selectedSport === "run" && (
                 <ReferenceLine y={170} stroke="#10b981" strokeDasharray="4 4" label={{ value: "Meta 170 spm", position: "insideTopRight", fill: "#10b981", fontSize: 11 }} />
               )}
-              <Area
+              <Line
                 type="monotone"
                 dataKey="valCadence"
-                name={selectedSport === "ride" ? "Cadência do Pedal" : "Cadência de Passadas"}
+                name={selectedSport === "ride" ? "Cadência do Pedal (rpm)" : "Cadência de Passadas (spm)"}
                 stroke="#f59e0b"
-                strokeWidth={2.5}
-                fillOpacity={1}
-                fill="url(#colorCad)"
+                strokeWidth={1.8}
+                dot={{ r: 3.5, fill: "#f59e0b" }}
+                activeDot={{ r: 6, fill: "#d97706" }}
                 connectNulls
               />
-            </AreaChart>
+            </LineChart>
           ) : (
-            /* VOLUME / DISTANCE */
-            <BarChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
+            /* VOLUME / DISTANCE (Line Chart) */
+            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
               <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
               <YAxis stroke={axisStroke} fontSize={11} tickLine={false} unit=" km" domain={[0, "auto"]} />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Bar dataKey="valDistance" name="Distância (km)" fill="#10b981" radius={[4, 4, 0, 0]} />
-            </BarChart>
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
+              <Line
+                type="monotone"
+                dataKey="valDistance"
+                name="Distância por Treino (km)"
+                stroke="#10b981"
+                strokeWidth={1.8}
+                dot={{ r: 3.5, fill: "#10b981" }}
+                activeDot={{ r: 6, fill: "#059669" }}
+                connectNulls
+              />
+            </LineChart>
           )}
         </ResponsiveContainer>
       </div>

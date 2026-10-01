@@ -628,8 +628,14 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
 
         # Pace & Speed
         pace_s = calculate_pace_seconds(dist_m, time_s)
+        # Glitch protection: running pace < 2:15 min/km (135 s/km) is physically impossible
+        if sport_cat == "run" and 0 < pace_s < 135.0:
+            pace_s = 0.0
+            pace_formatted = "--:--"
+        else:
+            pace_formatted = format_sport_performance(sport_cat, dist_m, time_s)
+
         speed_kmh = round((dist_km / (time_s / 3600.0)), 1) if (time_s > 0 and dist_km > 0) else 0.0
-        pace_formatted = format_sport_performance(sport_cat, dist_m, time_s)
 
         # Heart rate & Cadence
         hr = a.get("average_heartrate")
@@ -907,7 +913,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
     primary_sport = sports_summary[0]["sport_label"] if sports_summary else "Corrida"
 
     # Running pace comparison (baseline vs recent)
-    runs_pts = [p for p in timeline if p["sport_category"] == "run" and p["pace_seconds"] > 0]
+    runs_pts = [p for p in timeline if p["sport_category"] == "run" and 135.0 <= p["pace_seconds"] <= 720.0]
     sample_size_run = max(1, min(6, len(runs_pts) // 3)) if len(runs_pts) >= 3 else 1
     base_run_pts = runs_pts[:sample_size_run]
     rec_run_pts = runs_pts[-sample_size_run:]
@@ -921,7 +927,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
     pace_pct = round(((base_pace_avg - rec_pace_avg) / base_pace_avg) * 100.0, 1) if base_pace_avg > 0 else 0.0
 
     # Cycling speed comparison
-    ride_pts = [p for p in timeline if p["sport_category"] == "ride" and p["speed_kmh"] > 0]
+    ride_pts = [p for p in timeline if p["sport_category"] == "ride" and 5.0 <= p["speed_kmh"] <= 90.0]
     sample_size_ride = max(1, min(5, len(ride_pts) // 3)) if len(ride_pts) >= 3 else 1
     base_ride_pts = ride_pts[:sample_size_ride]
     rec_ride_pts = ride_pts[-sample_size_ride:]
@@ -947,7 +953,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
     cad_diff = round(rec_cad_avg - base_cad_avg, 0) if base_cad_avg and rec_cad_avg else None
 
     # Fastest run
-    valid_fast = [p for p in runs_pts if p["distance_km"] >= 2.5 and p["pace_seconds"] > 0]
+    valid_fast = [p for p in runs_pts if p["distance_km"] >= 2.5 and 135.0 <= p["pace_seconds"] <= 720.0]
     fastest = min(valid_fast, key=lambda x: x["pace_seconds"]) if valid_fast else (runs_pts[0] if runs_pts else None)
     fastest_info = {
         "name": fastest["name"],
