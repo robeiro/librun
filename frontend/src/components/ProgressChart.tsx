@@ -15,6 +15,7 @@ import {
   Tooltip,
   CartesianGrid,
   ReferenceLine,
+  Legend,
 } from "recharts";
 import { 
   TrendingUp, 
@@ -58,6 +59,7 @@ interface ChartItemData {
   valMovingAvgSpeed?: number | null;
   valDurationHours?: number | null;
   valDurationMinutes?: number | null;
+  valMovingAvgDurationHours?: number | null;
   valEfficiency?: number | null;
   valMovingAvgEfficiency?: number | null;
   valHeartRate?: number | null;
@@ -109,7 +111,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
   const isDark = resolvedTheme === "dark";
 
   const [selectedSport, setSelectedSport] = useState<SportFilterType>("all");
-  const [metric, setMetric] = useState<MetricType>("duration");
+  const [metric, setMetric] = useState<MetricType>("pace");
   const [aggregation, setAggregation] = useState<AggregationType>("session");
   const [distanceFilter, setDistanceFilter] = useState<DistanceFilterType>("all");
   const [showTrendline, setShowTrendline] = useState<boolean>(true);
@@ -155,13 +157,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
       setMetric("pace");
     } else if (selectedSport === "workout") {
       setMetric("duration");
-    } else if (selectedSport === "all") {
-      setMetric((prev) => {
-        if (prev === "pace" || prev === "speed" || prev === "cadence") {
-          return "duration";
-        }
-        return prev;
-      });
     }
   }, [selectedSport]);
 
@@ -205,6 +200,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
           valMovingAvgSpeed: movSpeed,
           valDurationHours: roundToDec(timeHours, 2),
           valDurationMinutes: Math.round(timeMinutes),
+          valMovingAvgDurationHours: p.moving_avg_duration_hours || null,
           valEfficiency: p.aerobic_efficiency,
           valMovingAvgEfficiency: p.moving_avg_efficiency,
           valHeartRate: p.average_heartrate,
@@ -453,13 +449,20 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
           </p>
         </div>
 
-        {/* Diagnostic Badge */}
-        {summary?.verdict_headline && (
-          <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 rounded-2xl px-3.5 py-2 flex items-center space-x-2 text-xs text-emerald-800 dark:text-emerald-300 self-start md:self-auto shadow-sm">
-            <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="font-bold">{summary.verdict_headline}</span>
+        {/* Badges */}
+        <div className="flex items-center flex-wrap gap-2 self-start md:self-auto">
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl px-3 py-1.5 flex items-center space-x-2 text-xs text-emerald-700 dark:text-emerald-300 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-bold">Linha de Tendência Móvel Ativa</span>
           </div>
-        )}
+
+          {summary?.verdict_headline && (
+            <div className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-3.5 py-1.5 flex items-center space-x-2 text-xs text-slate-700 dark:text-slate-300 shadow-xs">
+              <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="font-bold">{summary.verdict_headline}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 2. Multi-Sport Filter Toolbar */}
@@ -741,8 +744,8 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/80 pb-4">
         {/* Metric Selector Buttons (Tailored to current sport) */}
         <div className="flex items-center flex-wrap gap-1.5">
-          {/* Pace Metric (Run, Walk, Swim) */}
-          {(selectedSport === "run" || selectedSport === "walk" || selectedSport === "swim") && (
+          {/* Pace Metric (Run, Walk, Swim, or All) */}
+          {(selectedSport === "run" || selectedSport === "walk" || selectedSport === "swim" || selectedSport === "all") && (
             <button
               onClick={() => setMetric("pace")}
               className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
@@ -899,17 +902,17 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
           )}
 
           {/* Toggle Trendline */}
-          {aggregation === "session" && (metric === "pace" || metric === "speed") && (
+          {aggregation === "session" && (
             <button
               onClick={() => setShowTrendline(!showTrendline)}
-              className={`py-1 px-2.5 rounded-xl border text-xs font-semibold transition flex items-center space-x-1 ${
+              className={`py-1 px-3 rounded-xl border text-xs font-bold transition flex items-center space-x-1.5 ${
                 showTrendline
-                  ? "bg-teal-50 dark:bg-teal-500/10 border-teal-300 dark:border-teal-500/30 text-teal-700 dark:text-teal-400"
+                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 shadow-xs"
                   : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500"
               }`}
             >
-              <Layers className="w-3 h-3" />
-              <span>Média Móvel (Tendência)</span>
+              <Layers className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>Linha de Tendência Móvel: {showTrendline ? "✓ ATIVA" : "DESATIVADA"}</span>
             </button>
           )}
         </div>
@@ -932,12 +935,17 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 domain={["auto", "auto"]}
               />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
 
               {/* Individual Sessions */}
               <Line
                 type="monotone"
                 dataKey="valPace"
-                name="Ritmo"
+                name="Ritmo do Treino"
                 stroke="#0ea5e9"
                 strokeWidth={1.5}
                 dot={{ r: 3.5, fill: "#0ea5e9" }}
@@ -950,9 +958,9 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 <Line
                   type="monotone"
                   dataKey="valMovingAvgPace"
-                  name="Média Móvel"
+                  name="Linha de Tendência Móvel (Média de 5 Treinos)"
                   stroke="#10b981"
-                  strokeWidth={3}
+                  strokeWidth={3.5}
                   dot={false}
                   connectNulls
                 />
@@ -984,10 +992,15 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 domain={["auto", "auto"]}
               />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
               <Line
                 type="monotone"
                 dataKey="valSpeed"
-                name="Velocidade"
+                name="Velocidade do Treino"
                 stroke="#0ea5e9"
                 strokeWidth={2}
                 dot={{ r: 4, fill: "#0ea5e9" }}
@@ -998,9 +1011,9 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 <Line
                   type="monotone"
                   dataKey="valMovingAvgSpeed"
-                  name="Média Móvel Velocidade"
+                  name="Linha de Tendência Móvel (Velocidade Média)"
                   stroke="#10b981"
-                  strokeWidth={3}
+                  strokeWidth={3.5}
                   dot={false}
                   connectNulls
                 />
@@ -1025,6 +1038,11 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 domain={[0, "auto"]}
               />
               <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
+              <Legend
+                verticalAlign="top"
+                height={32}
+                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+              />
               <Area
                 type="monotone"
                 dataKey="valDurationHours"
@@ -1035,6 +1053,17 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 fill="url(#colorDuration)"
                 connectNulls
               />
+              {aggregation === "session" && showTrendline && (
+                <Line
+                  type="monotone"
+                  dataKey="valMovingAvgDurationHours"
+                  name="Linha de Tendência Móvel (Horas)"
+                  stroke="#0284c7"
+                  strokeWidth={3}
+                  dot={false}
+                  connectNulls
+                />
+              )}
             </AreaChart>
           ) : metric === "efficiency" ? (
             /* AEROBIC EFFICIENCY */

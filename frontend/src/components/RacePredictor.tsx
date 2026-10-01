@@ -15,7 +15,7 @@ export const RacePredictor: React.FC<RacePredictorProps> = ({ predictionsData })
   if (!preds || Object.keys(preds).length === 0) {
     return (
       <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 text-center text-slate-500 dark:text-slate-400 shadow-sm">
-        Dados insuficientes para prever tempos de prova (faça ao menos uma corrida de 3km ou mais).
+        {predictionsData?.message || "Dados insuficientes para prever tempos de prova (faça ao menos uma corrida de 3km ou mais em ritmo fisiológico realista)."}
       </div>
     );
   }

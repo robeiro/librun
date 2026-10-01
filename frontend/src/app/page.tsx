@@ -355,7 +355,7 @@ export default function Home() {
                   }`}
                 >
                   <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>Progresso & Evolução</span>
+                  <span>Evolução & Linha do Tempo</span>
                 </button>
 
                 <button

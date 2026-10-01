@@ -402,33 +402,66 @@ def calculate_race_predictions(activities: List[Dict[str, Any]]) -> Dict[str, An
     """
     Predicts race times (5k, 10k, 21.1k, 42.195k) using Pete Riegel formula:
     T2 = T1 * (D2 / D1)^1.06
-    Calibrated with athlete's actual best performances in recent activities.
+    Calibrated with athlete's actual best performances in realistic running activities.
+    Excludes non-run sports, glitches, and physiologically impossible paces (e.g. pace < 2:15 min/km or time < 10min).
     """
     if not activities:
         return {}
 
-    best_efforts = []
+    # Strict physical validation for running efforts:
+    # 1. Must be a running activity (never cycling, walking, gym or vehicle!)
+    # 2. Distance >= 2500m (at least 2.5 km)
+    # 3. Time >= 600s (at least 10 minutes) - rejects 78s/short glitches
+    # 4. Pace between 135 s/km (2:15 min/km, world-class sprint) and 660 s/km (11:00 min/km)
+    valid_efforts = []
     for a in activities:
+        # Verify sport category is Run
+        sc = classify_sport(a.get("type", ""))["sport_category"]
+        if sc != "run":
+            continue
+
         dist_m = float(a.get("distance") or 0.0)
         time_s = int(a.get("moving_time") or 0)
-        if dist_m >= 2500 and time_s > 0:
-            pace = time_s / (dist_m / 1000.0)
-            best_efforts.append({
-                "distance": dist_m,
-                "time": time_s,
-                "pace": pace,
-                "name": a.get("name"),
-                "date": a.get("start_date")
-            })
 
-    if not best_efforts:
-        return {}
+        # Minimum distance and duration
+        if dist_m < 2500.0 or time_s < 600:
+            continue
 
-    # Pick the best reference effort (highest aerobic speed for distance >= 4000m)
-    best_efforts.sort(key=lambda x: x["pace"])
-    # Prefer runs >= 4km for endurance predictions
-    endurance_efforts = [e for e in best_efforts if e["distance"] >= 4000]
-    ref = endurance_efforts[0] if endurance_efforts else best_efforts[0]
+        pace = time_s / (dist_m / 1000.0)
+
+        # Filter out GPS jumps, car trips, and sensor errors
+        if pace < 135.0 or pace > 660.0:
+            continue
+
+        valid_efforts.append({
+            "distance": dist_m,
+            "time": time_s,
+            "pace": pace,
+            "name": a.get("name") or "Corrida",
+            "date": a.get("start_date") or a.get("start_date_local")
+        })
+
+    if not valid_efforts:
+        return {
+            "reference_activity": None,
+            "predictions": {},
+            "insufficient_data": True,
+            "message": "Nenhuma corrida de pelo menos 2.5km em ritmo fisiológico realista encontrada para calcular as estimativas de prova."
+        }
+
+    # Sort valid efforts by pace (fastest first)
+    valid_efforts.sort(key=lambda x: x["pace"])
+
+    # Prefer runs >= 4000m for endurance predictions, otherwise best effort >= 2500m
+    endurance_efforts = [e for e in valid_efforts if e["distance"] >= 4000.0]
+    ref = endurance_efforts[0] if endurance_efforts else valid_efforts[0]
+
+    # Additional outlier check: if runner has >= 3 runs, ensure ref is not an extreme single spike
+    if len(valid_efforts) >= 3:
+        median_pace = statistics.median([e["pace"] for e in valid_efforts])
+        # If reference is > 35% faster than median, use the 2nd best to avoid downhill/GPS burst
+        if ref["pace"] < (median_pace * 0.65) and len(valid_efforts) > 1:
+            ref = valid_efforts[1]
 
     d1 = ref["distance"]
     t1 = ref["time"]
@@ -561,6 +594,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
     timeline = []
     run_paces_list = []
     ride_speeds_list = []
+    duration_list = []
     eff_list = []
     hr_list = []
 
@@ -635,8 +669,8 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
         else:
             cat = "geral"
 
-        # Moving Averages
-        if sport_cat == "run" and pace_s > 0:
+        # Moving Averages (with outlier protection)
+        if sport_cat == "run" and 135.0 <= pace_s <= 720.0:
             run_paces_list.append(pace_s)
             window_paces = run_paces_list[max(0, len(run_paces_list) - 5):]
             mov_avg_pace = round(statistics.mean(window_paces), 1)
@@ -645,12 +679,18 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
             mov_avg_pace = pace_s if pace_s > 0 else 0.0
             mov_avg_pace_formatted = pace_formatted
 
-        if sport_cat == "ride" and speed_kmh > 0:
+        if sport_cat == "ride" and 5.0 <= speed_kmh <= 90.0:
             ride_speeds_list.append(speed_kmh)
             window_speeds = ride_speeds_list[max(0, len(ride_speeds_list) - 5):]
             mov_avg_speed = round(statistics.mean(window_speeds), 1)
         else:
             mov_avg_speed = speed_kmh
+
+        # Rolling Duration (last 5 sessions)
+        duration_list.append(time_min)
+        window_durations = duration_list[max(0, len(duration_list) - 5):]
+        mov_avg_duration_min = round(statistics.mean(window_durations), 1)
+        mov_avg_duration_h = round(mov_avg_duration_min / 60.0, 2)
 
         # Rolling Aerobic Efficiency (last 5 cardio efforts)
         recent_effs = eff_list[max(0, len(eff_list) - 5):] if eff_list else []
@@ -694,6 +734,7 @@ def calculate_progress_analytics(activities: List[Dict[str, Any]]) -> Dict[str, 
             "moving_avg_pace_seconds": mov_avg_pace,
             "moving_avg_pace_formatted": mov_avg_pace_formatted,
             "moving_avg_speed_kmh": mov_avg_speed,
+            "moving_avg_duration_hours": mov_avg_duration_h,
             "moving_avg_efficiency": mov_avg_eff,
             "moving_avg_hr": mov_avg_hr
         })
@@ -1183,8 +1224,6 @@ def compute_full_analytics(activities: List[Dict[str, Any]], settings: Dict[str,
 
     # Filter runs specifically for running race predictor & run biomechanics
     runs = [a for a in activities if classify_sport(a.get("type", ""))["sport_category"] == "run"]
-    if not runs and activities:
-        runs = activities # fallback
 
     total_runs = len(runs)
     total_distance_m = sum(float(a.get("distance") or 0.0) for a in runs)

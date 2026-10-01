@@ -7,6 +7,44 @@ from typing import List, Dict, Any, Tuple
 
 from database import upsert_activity
 
+def parse_time_string_to_seconds(time_str: Any, distance_m: float = 0.0) -> int:
+    """
+    Parses various time representations into seconds:
+    - "01:18:30" (HH:MM:SS) -> 4710
+    - "1:18:30" -> 4710
+    - "18:30" (MM:SS) -> 1110
+    - "3600" or "3600.0" -> 3600
+    - Minutes format: if distance >= 2000m and raw number is <= 240,
+      the time was recorded in minutes (e.g. 78 min for 5km = 4680s).
+    """
+    if not time_str:
+        return 0
+    clean = str(time_str).strip()
+    if not clean:
+        return 0
+    if ":" in clean:
+        parts = clean.split(":")
+        try:
+            if len(parts) == 3:
+                h, m, s = int(float(parts[0])), int(float(parts[1])), float(parts[2])
+                return int(h * 3600 + m * 60 + s)
+            elif len(parts) == 2:
+                m, s = int(float(parts[0])), float(parts[1])
+                return int(m * 60 + s)
+        except Exception:
+            pass
+    clean_num = clean.replace(",", ".")
+    try:
+        val = float(clean_num)
+        # If val <= 240 and distance >= 2000:
+        # e.g., distance 5000m and val 78: 78 seconds would mean 230 km/h.
+        # This was exported in decimal minutes (78 min = 4680s).
+        if distance_m >= 2000.0 and 0 < val <= 240.0:
+            return int(val * 60.0)
+        return int(val)
+    except ValueError:
+        return 0
+
 def parse_strava_csv(file_content: bytes) -> Tuple[int, int]:
     """
     Parses a Strava 'activities.csv' file from the Strava bulk data archive.
@@ -25,7 +63,7 @@ def parse_strava_csv(file_content: bytes) -> Tuple[int, int]:
     for row in reader:
         # Map common Strava CSV headers (handle both English and Portuguese exports)
         act_id = row.get("Activity ID") or row.get("ID da atividade") or row.get("id") or ""
-        act_name = row.get("Activity Name") or row.get("Nome da atividade") or row.get("name") or "Corrida"
+        act_name = row.get("Activity Name") or row.get("Nome da atividade") or row.get("name") or "Atividade"
         act_type = row.get("Activity Type") or row.get("Tipo de atividade") or row.get("type") or "Run"
         
         # Keep all sports (Run, Ride, Swim, Walk, Hike, WeightTraining, Workout, etc.)
@@ -75,25 +113,21 @@ def parse_strava_csv(file_content: bytes) -> Tuple[int, int]:
             distance_m = 0.0
 
         # Moving Time (seconds)
-        moving_val = (
+        moving_raw = (
             row.get("Moving Time") or 
             row.get("Tempo em movimento") or 
             row.get("moving_time") or "0"
-        ).replace(",", ".")
-        try:
-            moving_time_s = int(float(moving_val))
-        except ValueError:
-            moving_time_s = 0
+        )
+        moving_time_s = parse_time_string_to_seconds(moving_raw, distance_m=distance_m)
 
         # Elapsed Time (seconds)
-        elapsed_val = (
+        elapsed_raw = (
             row.get("Elapsed Time") or 
             row.get("Tempo decorrido") or 
             row.get("elapsed_time") or str(moving_time_s)
-        ).replace(",", ".")
-        try:
-            elapsed_time_s = int(float(elapsed_val))
-        except ValueError:
+        )
+        elapsed_time_s = parse_time_string_to_seconds(elapsed_raw, distance_m=distance_m)
+        if elapsed_time_s <= 0:
             elapsed_time_s = moving_time_s
 
         # Elevation Gain
@@ -152,7 +186,7 @@ def parse_strava_csv(file_content: bytes) -> Tuple[int, int]:
             act_dict = {
                 "strava_id": str(act_id) if act_id else f"csv_{iso_date}_{distance_m}",
                 "name": act_name,
-                "type": "Run",
+                "type": act_type if act_type else "Run",
                 "distance": distance_m,
                 "moving_time": moving_time_s,
                 "elapsed_time": elapsed_time_s,

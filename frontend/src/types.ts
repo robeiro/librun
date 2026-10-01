@@ -76,6 +76,8 @@ export interface RacePredictions {
   predictions?: {
     [key: string]: RacePredictionItem;
   };
+  insufficient_data?: boolean;
+  message?: string;
 }
 
 export interface AnalyticsSummary {
@@ -147,6 +149,7 @@ export interface ProgressPoint {
   moving_avg_pace_seconds: number;
   moving_avg_pace_formatted: string;
   moving_avg_speed_kmh?: number;
+  moving_avg_duration_hours?: number;
   moving_avg_efficiency?: number | null;
   moving_avg_hr?: number | null;
 }
