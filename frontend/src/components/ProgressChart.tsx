@@ -11,6 +11,8 @@ import {
   Tooltip,
   CartesianGrid,
   ReferenceLine,
+  ReferenceArea,
+  Brush,
   Legend,
 } from "recharts";
 import { 
@@ -23,12 +25,15 @@ import {
   Award, 
   ArrowUpRight, 
   ArrowDownRight, 
-  Sparkles,
-  Filter,
-  Layers,
-  Clock,
-  Activity,
-  Layers3
+  Sparkles, 
+  Filter, 
+  Layers, 
+  Clock, 
+  Activity, 
+  Layers3,
+  MousePointerClick,
+  RotateCcw,
+  SlidersHorizontal
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 
@@ -43,6 +48,9 @@ type SportFilterType = "all" | "run" | "ride" | "swim" | "walk" | "workout" | st
 
 interface ChartItemData {
   chartX: string;
+  rawDate?: string;
+  fullDate?: string;
+  originalIndex?: number;
   tooltipTitle: string;
   sportIcon: string;
   sportLabel: string;
@@ -121,6 +129,16 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
   const [distanceFilter, setDistanceFilter] = useState<DistanceFilterType>("all");
   const [showTrendline, setShowTrendline] = useState<boolean>(true);
 
+  // Interval selection state
+  const [brushRange, setBrushRange] = useState<{ startIndex: number; endIndex: number } | null>(null);
+  const [activePreset, setActivePreset] = useState<"all" | "30d" | "90d" | "180d" | "year" | "custom">("all");
+  const [clickSelectionStart, setClickSelectionStart] = useState<{ index: number; label: string; date: string } | null>(null);
+  const [isMouseDown, setIsMouseDown] = useState<boolean>(false);
+  const [mouseDownIndex, setMouseDownIndex] = useState<number | null>(null);
+  const [dragSelection, setDragSelection] = useState<{ leftIndex: number; rightIndex: number } | null>(null);
+  const [showBrush, setShowBrush] = useState<boolean>(true);
+  const [brushKey, setBrushKey] = useState<number>(0);
+
   // Sync selectedSport on initial data load
   useEffect(() => {
     if (defaultSport) {
@@ -195,7 +213,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
         filtered = filtered.filter((p) => p.category === distanceFilter);
       }
 
-      return filtered.map((p) => {
+      return filtered.map((p, idx) => {
         const timeHours = (p.moving_time_seconds || 0) / 3600.0;
         const timeMinutes = (p.moving_time_seconds || 0) / 60.0;
         const speed = p.speed_kmh && p.speed_kmh > 0 ? p.speed_kmh : null;
@@ -203,6 +221,9 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
 
         return {
           chartX: p.date_formatted,
+          rawDate: p.date,
+          fullDate: p.full_date,
+          originalIndex: idx,
           tooltipTitle: `${p.name} • ${p.full_date}`,
           sportIcon: p.sport_icon || "🏃",
           sportLabel: p.sport_label || "Corrida",
@@ -231,10 +252,13 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
         };
       });
     } else if (aggregation === "week") {
-      return weekly.map((w) => {
+      return weekly.map((w, idx) => {
         const timeH = w.total_time_hours || (w.total_km > 0 ? roundToDec(w.total_km / 10.0, 1) : 0);
         return {
           chartX: w.label.split(" - ")[0],
+          rawDate: w.start_date,
+          fullDate: w.label,
+          originalIndex: idx,
           tooltipTitle: `Semana: ${w.label}`,
           sportIcon: "📅",
           sportLabel: "Total Semanal",
@@ -261,10 +285,13 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
         };
       });
     } else {
-      return monthly.map((m) => {
+      return monthly.map((m, idx) => {
         const timeH = m.total_time_hours || (m.total_km > 0 ? roundToDec(m.total_km / 10.0, 1) : 0);
         return {
           chartX: m.label,
+          rawDate: m.start_date,
+          fullDate: m.label,
+          originalIndex: idx,
           tooltipTitle: `Mês: ${m.label}`,
           sportIcon: "🗓️",
           sportLabel: "Total Mensal",
@@ -292,6 +319,253 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
       });
     }
   }, [progress, aggregation, selectedSport, distanceFilter]);
+
+  // Find the latest valid date in the chart data
+  const latestDate = useMemo(() => {
+    if (!chartData.length) return null;
+    for (let i = chartData.length - 1; i >= 0; i--) {
+      const item = chartData[i];
+      if (item.rawDate) {
+        const d = new Date(item.rawDate);
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+    return new Date();
+  }, [chartData]);
+
+  // Apply a date range preset
+  const applyPreset = (preset: "all" | "30d" | "90d" | "180d" | "year") => {
+    if (preset === "all" || !chartData.length || !latestDate) {
+      setBrushRange(null);
+      setActivePreset("all");
+      setClickSelectionStart(null);
+      setDragSelection(null);
+      setBrushKey((prev) => prev + 1);
+      return;
+    }
+
+    let cutoffTime: number;
+    if (preset === "30d") {
+      cutoffTime = latestDate.getTime() - 30 * 86400 * 1000;
+    } else if (preset === "90d") {
+      cutoffTime = latestDate.getTime() - 90 * 86400 * 1000;
+    } else if (preset === "180d") {
+      cutoffTime = latestDate.getTime() - 180 * 86400 * 1000;
+    } else if (preset === "year") {
+      const year = latestDate.getFullYear();
+      cutoffTime = new Date(`${year}-01-01T00:00:00`).getTime();
+    } else {
+      setBrushRange(null);
+      setActivePreset("all");
+      setBrushKey((prev) => prev + 1);
+      return;
+    }
+
+    const startIdx = chartData.findIndex((item) => {
+      if (!item.rawDate) return false;
+      const t = new Date(item.rawDate).getTime();
+      return t >= cutoffTime;
+    });
+
+    if (startIdx !== -1 && startIdx < chartData.length) {
+      setBrushRange({ startIndex: startIdx, endIndex: chartData.length - 1 });
+      setActivePreset(preset);
+      setClickSelectionStart(null);
+      setDragSelection(null);
+      setBrushKey((prev) => prev + 1);
+    } else {
+      const fallbackIdx = Math.max(0, chartData.length - 10);
+      setBrushRange({ startIndex: fallbackIdx, endIndex: chartData.length - 1 });
+      setActivePreset(preset);
+      setClickSelectionStart(null);
+      setDragSelection(null);
+      setBrushKey((prev) => prev + 1);
+    }
+  };
+
+  const handleResetInterval = () => {
+    setBrushRange(null);
+    setActivePreset("all");
+    setClickSelectionStart(null);
+    setDragSelection(null);
+    setMouseDownIndex(null);
+    setIsMouseDown(false);
+    setBrushKey((prev) => prev + 1);
+  };
+
+  // Reset range on sport/aggregation/distanceFilter changes
+  useEffect(() => {
+    setBrushRange(null);
+    setActivePreset("all");
+    setClickSelectionStart(null);
+    setDragSelection(null);
+    setMouseDownIndex(null);
+    setIsMouseDown(false);
+    setBrushKey((prev) => prev + 1);
+  }, [selectedSport, aggregation, distanceFilter]);
+
+interface ChartMouseEventState {
+  activeTooltipIndex?: number | string | null;
+  activeLabel?: string | number;
+}
+
+  // Mouse handlers for click and drag selection directly on the chart
+  const handleMouseDown = (state: ChartMouseEventState | null) => {
+    if (!state || state.activeTooltipIndex === undefined || state.activeTooltipIndex === null) return;
+    const currentOffset = brushRange?.startIndex ?? 0;
+    const rawIdx = Number(state.activeTooltipIndex);
+    const actualIdx = currentOffset + rawIdx;
+    if (actualIdx < 0 || actualIdx >= chartData.length) return;
+
+    setIsMouseDown(true);
+    setMouseDownIndex(actualIdx);
+  };
+
+  const handleMouseMove = (state: ChartMouseEventState | null) => {
+    if (!isMouseDown || mouseDownIndex === null) return;
+    if (!state || state.activeTooltipIndex === undefined || state.activeTooltipIndex === null) return;
+    const currentOffset = brushRange?.startIndex ?? 0;
+    const rawIdx = Number(state.activeTooltipIndex);
+    const actualIdx = currentOffset + rawIdx;
+    if (actualIdx < 0 || actualIdx >= chartData.length) return;
+
+    if (actualIdx !== mouseDownIndex) {
+      const left = Math.min(mouseDownIndex, actualIdx);
+      const right = Math.max(mouseDownIndex, actualIdx);
+      setDragSelection({ leftIndex: left, rightIndex: right });
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (!isMouseDown) return;
+    setIsMouseDown(false);
+
+    // If dragged an interval
+    if (dragSelection && dragSelection.leftIndex !== dragSelection.rightIndex) {
+      setBrushRange({ startIndex: dragSelection.leftIndex, endIndex: dragSelection.rightIndex });
+      setActivePreset("custom");
+      setClickSelectionStart(null);
+      setDragSelection(null);
+      setMouseDownIndex(null);
+      setBrushKey((prev) => prev + 1);
+      return;
+    }
+
+    // If clicked without dragging
+    if (mouseDownIndex !== null) {
+      if (clickSelectionStart === null) {
+        // First click
+        const item = chartData[mouseDownIndex];
+        setClickSelectionStart({
+          index: mouseDownIndex,
+          label: item.chartX,
+          date: item.fullDate || item.tooltipTitle?.split(" • ")[1] || item.chartX,
+        });
+      } else {
+        // Second click
+        if (clickSelectionStart.index !== mouseDownIndex) {
+          const left = Math.min(clickSelectionStart.index, mouseDownIndex);
+          const right = Math.max(clickSelectionStart.index, mouseDownIndex);
+          setBrushRange({ startIndex: left, endIndex: right });
+          setActivePreset("custom");
+          setBrushKey((prev) => prev + 1);
+        }
+        setClickSelectionStart(null);
+      }
+    }
+
+    setDragSelection(null);
+    setMouseDownIndex(null);
+  };
+
+  // Stats for the active selected interval
+  const intervalStats = useMemo(() => {
+    if (!chartData || chartData.length === 0) return null;
+    const isFiltered = brushRange !== null && (brushRange.startIndex > 0 || brushRange.endIndex < chartData.length - 1);
+    if (!isFiltered) return null;
+
+    const start = Math.max(0, brushRange.startIndex);
+    const end = Math.min(chartData.length - 1, brushRange.endIndex);
+    const items = chartData.slice(start, end + 1);
+    if (!items.length) return null;
+
+    const count = items.length;
+    const totalKm = roundToDec(items.reduce((acc, curr) => acc + (curr.valDistance || curr.distance_km || 0), 0), 1);
+    const totalHours = roundToDec(
+      items.reduce((acc, curr) => acc + (curr.valDurationHours || (curr.valDurationMinutes ? curr.valDurationMinutes / 60 : 0)), 0),
+      1
+    );
+
+    // Heart rate
+    const hrItems = items.filter((i) => i.valHeartRate && i.valHeartRate > 40);
+    const avgHr = hrItems.length ? Math.round(hrItems.reduce((acc, curr) => acc + (curr.valHeartRate || 0), 0) / hrItems.length) : null;
+
+    // Pace
+    const paceItems = items.filter((i) => i.valPace && i.valPace > 0);
+    const avgPaceSec = paceItems.length ? paceItems.reduce((acc, curr) => acc + (curr.valPace || 0), 0) / paceItems.length : null;
+    const avgPaceFormatted = avgPaceSec ? formatSecondsToPace(avgPaceSec) : null;
+
+    // Speed
+    const speedItems = items.filter((i) => i.valSpeed && i.valSpeed > 0);
+    const avgSpeed = speedItems.length ? roundToDec(speedItems.reduce((acc, curr) => acc + (curr.valSpeed || 0), 0) / speedItems.length, 1) : null;
+
+    // Efficiency
+    const effItems = items.filter((i) => i.valEfficiency && i.valEfficiency > 0);
+    const avgEff = effItems.length ? roundToDec(effItems.reduce((acc, curr) => acc + (curr.valEfficiency || 0), 0) / effItems.length, 2) : null;
+
+    // Cadence
+    const cadItems = items.filter((i) => i.valCadence && i.valCadence > 0);
+    const avgCad = cadItems.length ? Math.round(cadItems.reduce((acc, curr) => acc + (curr.valCadence || 0), 0) / cadItems.length) : null;
+
+    // Evolution/Trend within this period
+    let paceTrendMsg: string | null = null;
+    if (paceItems.length >= 4) {
+      const chunk = Math.max(1, Math.floor(paceItems.length / 3));
+      const firstPaces = paceItems.slice(0, chunk);
+      const lastPaces = paceItems.slice(paceItems.length - chunk);
+      const avgFirst = firstPaces.reduce((a, b) => a + (b.valPace || 0), 0) / chunk;
+      const avgLast = lastPaces.reduce((a, b) => a + (b.valPace || 0), 0) / chunk;
+      const diff = Math.round(avgLast - avgFirst); // negative means pace decreased = faster!
+      if (diff <= -3) {
+        paceTrendMsg = `Evolução no período: -${Math.abs(diff)}s/km mais veloz 🚀`;
+      } else if (diff >= 3) {
+        paceTrendMsg = `Ritmo +${diff}s/km mais controlado`;
+      } else {
+        paceTrendMsg = `Ritmo constante no período (~${avgPaceFormatted})`;
+      }
+    } else if (speedItems.length >= 4) {
+      const chunk = Math.max(1, Math.floor(speedItems.length / 3));
+      const firstSpeeds = speedItems.slice(0, chunk);
+      const lastSpeeds = speedItems.slice(speedItems.length - chunk);
+      const avgFirst = firstSpeeds.reduce((a, b) => a + (b.valSpeed || 0), 0) / chunk;
+      const avgLast = lastSpeeds.reduce((a, b) => a + (b.valSpeed || 0), 0) / chunk;
+      const diff = roundToDec(avgLast - avgFirst, 1);
+      if (diff >= 0.5) {
+        paceTrendMsg = `Ganho de velocidade no pedal: +${diff} km/h 🚀`;
+      } else if (diff <= -0.5) {
+        paceTrendMsg = `Velocidade média -${Math.abs(diff)} km/h`;
+      } else {
+        paceTrendMsg = `Velocidade sustentada (~${avgSpeed} km/h)`;
+      }
+    }
+
+    const startDateStr = items[0]?.fullDate || items[0]?.tooltipTitle?.split(" • ")[1] || items[0]?.chartX;
+    const endDateStr = items[items.length - 1]?.fullDate || items[items.length - 1]?.tooltipTitle?.split(" • ")[1] || items[items.length - 1]?.chartX;
+
+    return {
+      count,
+      totalKm,
+      totalHours,
+      avgHr,
+      avgPaceFormatted,
+      avgSpeed,
+      avgEff,
+      avgCad,
+      paceTrendMsg,
+      startDateStr,
+      endDateStr,
+    };
+  }, [chartData, brushRange]);
 
   // Date range info for the historical timeline ("desde quando comecei")
   const dateRangeNotice = useMemo(() => {
@@ -471,7 +745,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl">
-            Acompanhe a sua evolução em linha desde o primeiro registro até hoje. Selecione a modalidade abaixo para alternar os dados de ritmo, velocidade ou eficiência cardíaca.
+            Acompanhe a sua evolução em linha desde o primeiro registro até hoje. Clique ou arraste diretamente no gráfico para escolher qualquer intervalo de tempo para análise detalhada.
           </p>
         </div>
 
@@ -486,7 +760,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
 
           <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl px-3 py-1.5 flex items-center space-x-2 text-xs text-emerald-700 dark:text-emerald-300 shadow-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-bold">Linha de Tendência Móvel Ativa</span>
+            <span className="font-bold">Interativo (Clique & Arraste)</span>
           </div>
 
           {summary?.verdict_headline && (
@@ -773,11 +1047,10 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
         )}
       </div>
 
-      {/* 4. Interactive Controls Toolbar */}
+      {/* 4. Interactive Controls Toolbar (Metrics, Aggregation, Trendline) */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/80 pb-4">
-        {/* Metric Selector Buttons (Tailored to current sport) */}
+        {/* Metric Selector Buttons */}
         <div className="flex items-center flex-wrap gap-1.5">
-          {/* Pace Metric (Run, Walk, Swim, or All) */}
           {(selectedSport === "run" || selectedSport === "walk" || selectedSport === "swim" || selectedSport === "all") && (
             <button
               onClick={() => setMetric("pace")}
@@ -792,7 +1065,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             </button>
           )}
 
-          {/* Speed Metric (Ride or general) */}
           {(selectedSport === "ride" || selectedSport === "all") && (
             <button
               onClick={() => setMetric("speed")}
@@ -807,7 +1079,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             </button>
           )}
 
-          {/* Duration Metric (Universal across all sports) */}
           <button
             onClick={() => setMetric("duration")}
             className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
@@ -820,7 +1091,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             <span>Tempo de Treino</span>
           </button>
 
-          {/* Aerobic Efficiency */}
           <button
             onClick={() => setMetric("efficiency")}
             className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
@@ -833,7 +1103,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             <span>Eficiência Aeróbica</span>
           </button>
 
-          {/* Heart Rate */}
           <button
             onClick={() => setMetric("heartrate")}
             className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
@@ -846,7 +1115,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             <span>Frequência Cardíaca</span>
           </button>
 
-          {/* Cadence (Run, Ride) */}
           {(selectedSport === "run" || selectedSport === "ride") && (
             <button
               onClick={() => setMetric("cadence")}
@@ -861,7 +1129,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             </button>
           )}
 
-          {/* Distance / Volume */}
           <button
             onClick={() => setMetric("volume")}
             className={`py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 ${
@@ -877,7 +1144,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
 
         {/* Aggregation & Filtering Options */}
         <div className="flex items-center flex-wrap gap-2 text-xs">
-          {/* Aggregation Selector */}
           <div className="flex items-center bg-slate-100 dark:bg-slate-800/90 rounded-xl p-0.5 border border-slate-200 dark:border-slate-700/60">
             <button
               onClick={() => setAggregation("session")}
@@ -911,7 +1177,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             </button>
           </div>
 
-          {/* Distance Filter (available when by session and on running/cycling) */}
           {aggregation === "session" && (selectedSport === "run" || selectedSport === "ride") && (
             <div className="flex items-center space-x-1 bg-slate-100 dark:bg-slate-800/90 rounded-xl px-2 py-0.5 border border-slate-200 dark:border-slate-700/60">
               <Filter className="w-3 h-3 text-slate-400 shrink-0" />
@@ -934,7 +1199,6 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
             </div>
           )}
 
-          {/* Toggle Trendline */}
           {aggregation === "session" && (
             <button
               onClick={() => setShowTrendline(!showTrendline)}
@@ -951,72 +1215,218 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
         </div>
       </div>
 
-      {/* 5. Chart Display Canvas */}
-      <div className="h-80 w-full relative">
+      {/* 5. Interval Selection Toolbar & Presets */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800/80">
+        <div className="flex items-center flex-wrap gap-1.5 text-xs">
+          <span className="text-slate-500 dark:text-slate-400 font-bold flex items-center space-x-1 mr-1">
+            <Calendar className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Intervalo:</span>
+          </span>
+
+          <button
+            onClick={() => applyPreset("all")}
+            className={`py-1 px-2.5 rounded-lg font-bold transition text-xs ${
+              activePreset === "all" && !brushRange
+                ? "bg-emerald-500 text-slate-950 shadow-xs"
+                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            }`}
+          >
+            Todo o Histórico
+          </button>
+
+          <button
+            onClick={() => applyPreset("30d")}
+            className={`py-1 px-2.5 rounded-lg font-bold transition text-xs ${
+              activePreset === "30d"
+                ? "bg-emerald-500 text-slate-950 shadow-xs"
+                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            }`}
+          >
+            Últimos 30 Dias
+          </button>
+
+          <button
+            onClick={() => applyPreset("90d")}
+            className={`py-1 px-2.5 rounded-lg font-bold transition text-xs ${
+              activePreset === "90d"
+                ? "bg-emerald-500 text-slate-950 shadow-xs"
+                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            }`}
+          >
+            Últimos 3 Meses
+          </button>
+
+          <button
+            onClick={() => applyPreset("180d")}
+            className={`py-1 px-2.5 rounded-lg font-bold transition text-xs ${
+              activePreset === "180d"
+                ? "bg-emerald-500 text-slate-950 shadow-xs"
+                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            }`}
+          >
+            Últimos 6 Meses
+          </button>
+
+          <button
+            onClick={() => applyPreset("year")}
+            className={`py-1 px-2.5 rounded-lg font-bold transition text-xs ${
+              activePreset === "year"
+                ? "bg-emerald-500 text-slate-950 shadow-xs"
+                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            }`}
+          >
+            Ano Atual
+          </button>
+
+          {activePreset === "custom" && brushRange && (
+            <span className="py-1 px-2.5 rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30 text-xs flex items-center space-x-1">
+              <MousePointerClick className="w-3 h-3 text-emerald-500" />
+              <span>Intervalo Personalizado</span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center space-x-2 text-xs">
+          <span className="text-[11px] text-slate-400 hidden xl:inline">
+            💡 Clique em 2 pontos ou arraste no gráfico para escolher qualquer intervalo
+          </span>
+
+          <button
+            onClick={() => setShowBrush(!showBrush)}
+            className={`py-1 px-2.5 rounded-lg border text-xs font-semibold transition flex items-center space-x-1 ${
+              showBrush
+                ? "bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+                : "bg-transparent border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-600"
+            }`}
+            title="Ativar/desativar barra deslizante da linha do tempo"
+          >
+            <SlidersHorizontal className="w-3 h-3" />
+            <span>Linha do Tempo (Brush): {showBrush ? "Visível" : "Oculto"}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 6. Active Point / Active Interval Banner */}
+      {clickSelectionStart && (
+        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/40 rounded-2xl p-3 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300 animate-fadeIn">
+          <div className="flex items-center space-x-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+            <span>
+              <strong>Ponto inicial marcado:</strong> {clickSelectionStart.date}. Agora <strong>clique em outro ponto</strong> do gráfico para definir o fim do intervalo (ou arraste se preferir).
+            </span>
+          </div>
+          <button
+            onClick={() => setClickSelectionStart(null)}
+            className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 hover:bg-emerald-200 dark:hover:bg-emerald-800 text-emerald-800 dark:text-emerald-200 font-bold transition flex items-center space-x-1"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Cancelar</span>
+          </button>
+        </div>
+      )}
+
+      {/* Interval Summary KPI Box */}
+      {intervalStats && (
+        <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-sky-500/10 border border-emerald-500/30 rounded-2xl p-4 space-y-3 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-500/20 pb-2.5">
+            <div className="flex items-center space-x-2 flex-wrap gap-1">
+              <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                Intervalo Selecionado: <span className="text-emerald-700 dark:text-emerald-300 font-extrabold">{intervalStats.startDateStr}</span> até <span className="text-emerald-700 dark:text-emerald-300 font-extrabold">{intervalStats.endDateStr}</span>
+              </span>
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold">
+                {intervalStats.count} {aggregation === "session" ? "treinos" : aggregation === "week" ? "semanas" : "meses"}
+              </span>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              {intervalStats.paceTrendMsg && (
+                <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 hidden md:inline">
+                  {intervalStats.paceTrendMsg}
+                </span>
+              )}
+              <button
+                onClick={handleResetInterval}
+                className="text-xs font-bold px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition flex items-center space-x-1.5 shadow-xs"
+              >
+                <span>✕</span>
+                <span>Ver Todo o Histórico</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Metric mini pills for selected range */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2.5 text-xs">
+            <div className="bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Distância Total</span>
+              <strong className="text-sm font-bold text-slate-900 dark:text-slate-100">{intervalStats.totalKm} km</strong>
+            </div>
+
+            <div className="bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Tempo Total</span>
+              <strong className="text-sm font-bold text-slate-900 dark:text-slate-100">{intervalStats.totalHours}h</strong>
+            </div>
+
+            {intervalStats.avgPaceFormatted && (
+              <div className="bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Pace Médio Período</span>
+                <strong className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{intervalStats.avgPaceFormatted}</strong>
+              </div>
+            )}
+
+            {intervalStats.avgSpeed && (
+              <div className="bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Velocidade Média</span>
+                <strong className="text-sm font-bold text-sky-600 dark:text-sky-400">{intervalStats.avgSpeed} km/h</strong>
+              </div>
+            )}
+
+            {intervalStats.avgHr && (
+              <div className="bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">FC Média Período</span>
+                <strong className="text-sm font-bold text-rose-500">{intervalStats.avgHr} bpm</strong>
+              </div>
+            )}
+
+            {intervalStats.avgCad && (
+              <div className="bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Cadência Média</span>
+                <strong className="text-sm font-bold text-amber-500">{intervalStats.avgCad} {selectedSport === "ride" ? "rpm" : "spm"}</strong>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 7. Unified Interactive Chart Display Canvas */}
+      <div 
+        className="h-88 sm:h-96 w-full relative select-none"
+        onMouseLeave={handleMouseUp}
+      >
         <ResponsiveContainer width="100%" height="100%">
-          {/* PACE METRIC: Line Chart with inverted Y-axis so faster pace is on top */}
-          {metric === "pace" ? (
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
+          <LineChart
+            data={chartData}
+            margin={{ top: 15, right: 15, left: -10, bottom: 5 }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            style={{ cursor: isMouseDown ? "col-resize" : "crosshair" }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
+            <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
+
+            {/* Metric-specific Y-Axis */}
+            {metric === "pace" && (
               <YAxis
                 stroke={axisStroke}
                 fontSize={11}
                 tickLine={false}
-                reversed={true} // Faster pace appears higher!
+                reversed={true} // Faster pace appears higher
                 tickFormatter={(val) => formatSecondsToPace(val)}
                 domain={["auto", "auto"]}
               />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
-              />
-
-              {/* Individual Sessions */}
-              <Line
-                type="monotone"
-                dataKey="valPace"
-                name="Ritmo do Treino"
-                stroke="#0ea5e9"
-                strokeWidth={1.5}
-                dot={{ r: 3.5, fill: "#0ea5e9" }}
-                activeDot={{ r: 6, fill: "#0284c7" }}
-                connectNulls
-              />
-
-              {/* Smoothed Trendline */}
-              {aggregation === "session" && showTrendline && (
-                <Line
-                  type="monotone"
-                  dataKey="valMovingAvgPace"
-                  name="Linha de Tendência Móvel (Média de 5 Treinos)"
-                  stroke="#10b981"
-                  strokeWidth={3.5}
-                  dot={false}
-                  connectNulls
-                />
-              )}
-
-              {aggregation !== "session" && (
-                <Line
-                  type="monotone"
-                  dataKey="valBestPace"
-                  name="Melhor Ritmo"
-                  stroke="#2dd4bf"
-                  strokeDasharray="4 4"
-                  strokeWidth={2}
-                  dot={{ r: 3, fill: "#2dd4bf" }}
-                  connectNulls
-                />
-              )}
-            </LineChart>
-          ) : metric === "speed" ? (
-            /* SPEED METRIC (km/h) */
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
+            )}
+            {metric === "speed" && (
               <YAxis
                 stroke={axisStroke}
                 fontSize={11}
@@ -1024,39 +1434,8 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 unit=" km/h"
                 domain={["auto", "auto"]}
               />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
-              />
-              <Line
-                type="monotone"
-                dataKey="valSpeed"
-                name="Velocidade do Treino"
-                stroke="#0ea5e9"
-                strokeWidth={2}
-                dot={{ r: 4, fill: "#0ea5e9" }}
-                activeDot={{ r: 6, fill: "#0284c7" }}
-                connectNulls
-              />
-              {aggregation === "session" && showTrendline && (
-                <Line
-                  type="monotone"
-                  dataKey="valMovingAvgSpeed"
-                  name="Linha de Tendência Móvel (Velocidade Média)"
-                  stroke="#10b981"
-                  strokeWidth={3.5}
-                  dot={false}
-                  connectNulls
-                />
-              )}
-            </LineChart>
-          ) : metric === "duration" ? (
-            /* DURATION (Universal Multi-Sport Line Chart) */
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
+            )}
+            {metric === "duration" && (
               <YAxis
                 stroke={axisStroke}
                 fontSize={11}
@@ -1064,81 +1443,203 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 unit="h"
                 domain={[0, "auto"]}
               />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+            )}
+            {metric === "efficiency" && (
+              <YAxis
+                stroke={axisStroke}
+                fontSize={11}
+                tickLine={false}
+                unit=" m/bpm"
+                domain={["auto", "auto"]}
               />
-              <Line
-                type="monotone"
-                dataKey="valDurationHours"
-                name="Horas do Treino"
-                stroke="#0ea5e9"
-                strokeWidth={1.8}
-                dot={{ r: 3.5, fill: "#0ea5e9" }}
-                activeDot={{ r: 6, fill: "#0284c7" }}
-                connectNulls
+            )}
+            {metric === "heartrate" && (
+              <YAxis
+                stroke={axisStroke}
+                fontSize={11}
+                tickLine={false}
+                unit=" bpm"
+                domain={["auto", "auto"]}
               />
-              {aggregation === "session" && showTrendline && (
+            )}
+            {metric === "cadence" && (
+              <YAxis
+                stroke={axisStroke}
+                fontSize={11}
+                tickLine={false}
+                unit={selectedSport === "ride" ? " rpm" : " spm"}
+                domain={selectedSport === "ride" ? [60, 110] : [140, 195]}
+              />
+            )}
+            {metric === "volume" && (
+              <YAxis
+                stroke={axisStroke}
+                fontSize={11}
+                tickLine={false}
+                unit=" km"
+                domain={[0, "auto"]}
+              />
+            )}
+
+            <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
+
+            <Legend
+              verticalAlign="top"
+              height={32}
+              formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
+            />
+
+            {/* Selection indicators on chart */}
+            {clickSelectionStart && (
+              <ReferenceLine
+                x={clickSelectionStart.label}
+                stroke="#10b981"
+                strokeWidth={2}
+                strokeDasharray="4 4"
+                label={{ value: "📍 Início", position: "top", fill: "#10b981", fontSize: 11, fontWeight: "bold" }}
+              />
+            )}
+
+            {dragSelection && (
+              <ReferenceArea
+                x1={chartData[dragSelection.leftIndex]?.chartX}
+                x2={chartData[dragSelection.rightIndex]?.chartX}
+                fill="#10b981"
+                fillOpacity={0.25}
+                stroke="#10b981"
+                strokeOpacity={0.8}
+                strokeDasharray="3 3"
+              />
+            )}
+
+            {metric === "cadence" && selectedSport === "run" && (
+              <ReferenceLine
+                y={170}
+                stroke="#10b981"
+                strokeDasharray="4 4"
+                label={{ value: "Meta 170 spm", position: "insideTopRight", fill: "#10b981", fontSize: 11 }}
+              />
+            )}
+
+            {/* Metric-specific Lines */}
+            {metric === "pace" && (
+              <>
                 <Line
                   type="monotone"
-                  dataKey="valMovingAvgDurationHours"
-                  name="Linha de Tendência Móvel (Horas)"
-                  stroke="#10b981"
-                  strokeWidth={3}
-                  dot={false}
+                  dataKey="valPace"
+                  name="Ritmo do Treino"
+                  stroke="#0ea5e9"
+                  strokeWidth={1.5}
+                  dot={{ r: 3.5, fill: "#0ea5e9" }}
+                  activeDot={{ r: 6, fill: "#0284c7" }}
                   connectNulls
                 />
-              )}
-            </LineChart>
-          ) : metric === "efficiency" ? (
-            /* AEROBIC EFFICIENCY (Line Chart) */
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
-              <YAxis stroke={axisStroke} fontSize={11} tickLine={false} unit=" m/bpm" domain={["auto", "auto"]} />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
-              />
-              <Line
-                type="monotone"
-                dataKey="valEfficiency"
-                name="Fator de Eficiência"
-                stroke="#06b6d4"
-                strokeWidth={1.8}
-                dot={{ r: 3.5, fill: "#06b6d4" }}
-                activeDot={{ r: 6, fill: "#0891b2" }}
-                connectNulls
-              />
-              {aggregation === "session" && (
+                {aggregation === "session" && showTrendline && (
+                  <Line
+                    type="monotone"
+                    dataKey="valMovingAvgPace"
+                    name="Linha de Tendência Móvel (Média de 5 Treinos)"
+                    stroke="#10b981"
+                    strokeWidth={3.5}
+                    dot={false}
+                    connectNulls
+                  />
+                )}
+                {aggregation !== "session" && (
+                  <Line
+                    type="monotone"
+                    dataKey="valBestPace"
+                    name="Melhor Ritmo"
+                    stroke="#2dd4bf"
+                    strokeDasharray="4 4"
+                    strokeWidth={2}
+                    dot={{ r: 3, fill: "#2dd4bf" }}
+                    connectNulls
+                  />
+                )}
+              </>
+            )}
+
+            {metric === "speed" && (
+              <>
                 <Line
                   type="monotone"
-                  dataKey="valMovingAvgEfficiency"
-                  name="Tendência Média Móvel"
-                  stroke="#10b981"
-                  strokeWidth={3}
-                  strokeDasharray="3 3"
-                  dot={false}
+                  dataKey="valSpeed"
+                  name="Velocidade do Treino"
+                  stroke="#0ea5e9"
+                  strokeWidth={2}
+                  dot={{ r: 4, fill: "#0ea5e9" }}
+                  activeDot={{ r: 6, fill: "#0284c7" }}
                   connectNulls
                 />
-              )}
-            </LineChart>
-          ) : metric === "heartrate" ? (
-            /* HEART RATE (Line Chart) */
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
-              <YAxis stroke={axisStroke} fontSize={11} tickLine={false} unit=" bpm" domain={["auto", "auto"]} />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
-              />
+                {aggregation === "session" && showTrendline && (
+                  <Line
+                    type="monotone"
+                    dataKey="valMovingAvgSpeed"
+                    name="Linha de Tendência Móvel (Velocidade Média)"
+                    stroke="#10b981"
+                    strokeWidth={3.5}
+                    dot={false}
+                    connectNulls
+                  />
+                )}
+              </>
+            )}
+
+            {metric === "duration" && (
+              <>
+                <Line
+                  type="monotone"
+                  dataKey="valDurationHours"
+                  name="Horas do Treino"
+                  stroke="#0ea5e9"
+                  strokeWidth={1.8}
+                  dot={{ r: 3.5, fill: "#0ea5e9" }}
+                  activeDot={{ r: 6, fill: "#0284c7" }}
+                  connectNulls
+                />
+                {aggregation === "session" && showTrendline && (
+                  <Line
+                    type="monotone"
+                    dataKey="valMovingAvgDurationHours"
+                    name="Linha de Tendência Móvel (Horas)"
+                    stroke="#10b981"
+                    strokeWidth={3}
+                    dot={false}
+                    connectNulls
+                  />
+                )}
+              </>
+            )}
+
+            {metric === "efficiency" && (
+              <>
+                <Line
+                  type="monotone"
+                  dataKey="valEfficiency"
+                  name="Fator de Eficiência"
+                  stroke="#06b6d4"
+                  strokeWidth={1.8}
+                  dot={{ r: 3.5, fill: "#06b6d4" }}
+                  activeDot={{ r: 6, fill: "#0891b2" }}
+                  connectNulls
+                />
+                {aggregation === "session" && (
+                  <Line
+                    type="monotone"
+                    dataKey="valMovingAvgEfficiency"
+                    name="Tendência Média Móvel"
+                    stroke="#10b981"
+                    strokeWidth={3}
+                    strokeDasharray="3 3"
+                    dot={false}
+                    connectNulls
+                  />
+                )}
+              </>
+            )}
+
+            {metric === "heartrate" && (
               <Line
                 type="monotone"
                 dataKey="valHeartRate"
@@ -1149,28 +1650,9 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 activeDot={{ r: 6, fill: "#e11d48" }}
                 connectNulls
               />
-            </LineChart>
-          ) : metric === "cadence" ? (
-            /* CADENCE (Line Chart) */
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
-              <YAxis
-                stroke={axisStroke}
-                fontSize={11}
-                tickLine={false}
-                unit={selectedSport === "ride" ? " rpm" : " spm"}
-                domain={selectedSport === "ride" ? [60, 110] : [140, 195]}
-              />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
-              />
-              {selectedSport === "run" && (
-                <ReferenceLine y={170} stroke="#10b981" strokeDasharray="4 4" label={{ value: "Meta 170 spm", position: "insideTopRight", fill: "#10b981", fontSize: 11 }} />
-              )}
+            )}
+
+            {metric === "cadence" && (
               <Line
                 type="monotone"
                 dataKey="valCadence"
@@ -1181,19 +1663,9 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 activeDot={{ r: 6, fill: "#d97706" }}
                 connectNulls
               />
-            </LineChart>
-          ) : (
-            /* VOLUME / DISTANCE (Line Chart) */
-            <LineChart data={chartData} margin={{ top: 15, right: 15, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={isDark ? 0.35 : 0.7} />
-              <XAxis dataKey="chartX" stroke={axisStroke} fontSize={11} tickLine={false} />
-              <YAxis stroke={axisStroke} fontSize={11} tickLine={false} unit=" km" domain={[0, "auto"]} />
-              <Tooltip content={<CustomTooltip metric={metric} aggregation={aggregation} />} />
-              <Legend
-                verticalAlign="top"
-                height={32}
-                formatter={(val) => <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{val}</span>}
-              />
+            )}
+
+            {metric === "volume" && (
               <Line
                 type="monotone"
                 dataKey="valDistance"
@@ -1204,12 +1676,32 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
                 activeDot={{ r: 6, fill: "#059669" }}
                 connectNulls
               />
-            </LineChart>
-          )}
+            )}
+
+            {/* Brush timeline navigator at bottom of chart */}
+            {chartData.length > 2 && showBrush && (
+              <Brush
+                key={brushKey}
+                dataKey="chartX"
+                height={28}
+                stroke={isDark ? "#10b981" : "#059669"}
+                fill={isDark ? "#0f172a" : "#f8fafc"}
+                startIndex={brushRange?.startIndex ?? 0}
+                endIndex={brushRange?.endIndex ?? (chartData.length - 1)}
+                onChange={(update) => {
+                  if (typeof update.startIndex === "number" && typeof update.endIndex === "number") {
+                    setBrushRange({ startIndex: update.startIndex, endIndex: update.endIndex });
+                    setActivePreset("custom");
+                  }
+                }}
+                tickFormatter={(val) => String(val)}
+              />
+            )}
+          </LineChart>
         </ResponsiveContainer>
       </div>
 
-      {/* 6. Chart Legend & Diagnostic Footer */}
+      {/* 8. Chart Legend & Diagnostic Footer */}
       <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
         <div className="flex items-center flex-wrap gap-4">
           {metric === "pace" && (
@@ -1262,11 +1754,15 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ progress }) => {
         </div>
 
         <div className="shrink-0 text-slate-400 dark:text-slate-500 font-medium">
-          Total de {chartData.length} registros analisados
+          {brushRange ? (
+            <span>Exibindo <strong>{(brushRange.endIndex - brushRange.startIndex + 1)}</strong> de {chartData.length} registros</span>
+          ) : (
+            <span>Total de {chartData.length} registros analisados</span>
+          )}
         </div>
       </div>
 
-      {/* 7. Coach Verdict Card */}
+      {/* 9. Coach Verdict Card */}
       {summary?.verdict_text && (
         <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex items-start space-x-3 text-xs">
           <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
