@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import dynamic from "next/dynamic";
 import { Activity } from "../types";
 import {
   Trophy,
@@ -14,8 +13,7 @@ import {
   Sparkles,
   Flame,
   TrendingUp,
-  Award,
-  Map as MapIcon
+  Award
 } from "lucide-react";
 import {
   LineChart,
@@ -27,18 +25,6 @@ import {
   CartesianGrid
 } from "recharts";
 import { useTheme } from "../context/ThemeContext";
-
-const DuelMap = dynamic(
-  () => import("./DuelMap").then((mod) => mod.DuelMap),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-[260px] sm:h-[300px] rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 text-xs">
-        Carregando traçado GPS...
-      </div>
-    ),
-  }
-);
 
 interface ActivityDuelProps {
   activities: Activity[];
@@ -127,7 +113,6 @@ export const ActivityDuel: React.FC<ActivityDuelProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [progressRatio, setProgressRatio] = useState<number>(0); // 0 to 1
   const [speedMultiplier, setSpeedMultiplier] = useState<number>(5); // 1x, 2x, 5x, 10x, 25x
-  const [showGpsMap, setShowGpsMap] = useState<boolean>(true);
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number | null>(null);
 
@@ -558,21 +543,6 @@ export const ActivityDuel: React.FC<ActivityDuelProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Toggle GPS Mini-Map */}
-            <button
-              type="button"
-              onClick={() => setShowGpsMap(!showGpsMap)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition shadow-xs ${
-                showGpsMap
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                  : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
-              }`}
-              title="Exibir ou ocultar o traçado geográfico real com mapa de GPS"
-            >
-              <MapIcon className="w-3.5 h-3.5" />
-              <span>{showGpsMap ? "Ocultar Mapa GPS" : "Mostrar Mapa GPS"}</span>
-            </button>
-
             {/* Real-time Gap Banner */}
             <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-xs font-bold">
               {isTied ? (
@@ -670,31 +640,6 @@ export const ActivityDuel: React.FC<ActivityDuelProps> = ({
             </div>
           </div>
         </div>
-
-        {/* 2. MINI-MAPA GPS SINCRONIZADO (Opcional e leve, logo abaixo da pista) */}
-        {showGpsMap && (
-          <div className="space-y-2 pt-1 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between text-xs px-1">
-              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center space-x-1.5">
-                <MapIcon className="w-3.5 h-3.5 text-emerald-500" />
-                <span>Posicionamento Real no GPS (Ruas e Curvas)</span>
-              </span>
-              <span className="text-[11px] text-slate-400 hidden sm:inline">
-                Corredores posicionados lado a lado nas ruas
-              </span>
-            </div>
-            <DuelMap
-              actA={actA}
-              actB={actB}
-              distACovered={distACovered}
-              distBCovered={distBCovered}
-              raceDistanceMeters={raceDistanceMeters}
-              isDark={isDark}
-              isPlaying={isPlaying}
-              formatActivityName={formatActivityName}
-            />
-          </div>
-        )}
 
         {/* INTERACTIVE TIMELINE SCRUBBER & CONTROLS */}
         <div className="space-y-4 pt-2">
