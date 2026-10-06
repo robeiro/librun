@@ -72,6 +72,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [testResult, setTestResult] = useState<{ valid?: boolean; message?: string; error?: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [autoSync, setAutoSync] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("librun_auto_sync") !== "false";
+    }
+    return true;
+  });
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -85,6 +91,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setGeminiModel(athlete.gemini_model);
     }
   }, [athlete]);
+
+  // Close on Escape key press
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -155,6 +172,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         if (geminiModel) {
           localStorage.setItem("librun_gemini_model", geminiModel);
         }
+        localStorage.setItem("librun_auto_sync", String(autoSync));
       }
 
       const payload: Partial<AthleteSettings> = {
@@ -183,10 +201,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative my-8">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div 
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           onClick={onClose}
+          aria-label="Fechar configurações"
           className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
         >
           <X className="w-5 h-5" />
@@ -245,6 +272,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>Sistema</span>
               </button>
             </div>
+          </div>
+
+          {/* Sincronização Automática */}
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="pr-3">
+              <span className="text-slate-800 dark:text-slate-200 font-semibold block text-xs">
+                Sincronizar Strava ao Iniciar
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight block mt-0.5">
+                Mantém a sessão conectada e busca novas corridas automaticamente ao abrir o aplicativo.
+              </span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={autoSync}
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setAutoSync(val);
+                  if (typeof window !== "undefined") {
+                    localStorage.setItem("librun_auto_sync", String(val));
+                  }
+                }}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-emerald-500"></div>
+            </label>
           </div>
 
           <div>
@@ -489,14 +543,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <span>{confirmClear ? "Confirmar Limpeza de Dados?" : "Limpar Corridas"}</span>
             </button>
 
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="py-2 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-600 text-slate-950 flex items-center space-x-1.5 transition shadow-md shadow-emerald-500/20"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>Salvar Alterações</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="py-2 px-3 rounded-xl font-semibold text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="py-2 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-600 text-slate-950 flex items-center space-x-1.5 transition shadow-md shadow-emerald-500/20"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Salvar Alterações</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

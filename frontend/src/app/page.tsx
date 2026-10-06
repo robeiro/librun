@@ -120,8 +120,175 @@ export default function Home() {
     }
   }, []);
 
-  // Handle Strava OAuth callback on mount
+  const isProcessingOAuth = React.useRef(false);
+  const hasAutoSynced = React.useRef(false);
+
+  // Background auto-sync on startup
+  const triggerAutoSync = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const autoSyncEnabled = localStorage.getItem("librun_auto_sync") !== "false";
+    if (!autoSyncEnabled) return;
+
+    const savedToken = localStorage.getItem("librun_strava_access_token");
+    const savedRefreshToken = localStorage.getItem("librun_strava_refresh_token");
+    if (!savedToken && !savedRefreshToken) return;
+
+    const lastSync = Number(localStorage.getItem("librun_last_sync_timestamp") || 0);
+    const now = Date.now();
+    // Auto-sync if more than 3 minutes since last sync
+    if (now - lastSync < 3 * 60 * 1000) return;
+
+    try {
+      const savedCid = localStorage.getItem("librun_strava_client_id");
+      const savedCsec = localStorage.getItem("librun_strava_client_secret");
+      const savedExpiresAt = localStorage.getItem("librun_strava_token_expires_at");
+      const savedAthleteId = localStorage.getItem("librun_strava_athlete_id");
+
+      const res = await fetch("/api/strava/sync", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          ...(savedToken ? { "X-Strava-Token": savedToken } : {}),
+          ...(savedAthleteId ? { "X-Athlete-Id": savedAthleteId } : {})
+        },
+        body: JSON.stringify({ 
+          count: 30, // Quick recent sync
+          client_id: savedCid || undefined,
+          client_secret: savedCsec || undefined,
+          access_token: savedToken || undefined,
+          refresh_token: savedRefreshToken || undefined,
+          token_expires_at: savedExpiresAt ? Number(savedExpiresAt) : undefined,
+          athlete_id: savedAthleteId || undefined
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.new_tokens) {
+          if (data.new_tokens.access_token) localStorage.setItem("librun_strava_access_token", data.new_tokens.access_token);
+          if (data.new_tokens.refresh_token) localStorage.setItem("librun_strava_refresh_token", data.new_tokens.refresh_token);
+          if (data.new_tokens.expires_at) localStorage.setItem("librun_strava_token_expires_at", String(data.new_tokens.expires_at));
+        }
+        localStorage.setItem("librun_last_sync_timestamp", String(now));
+        if (data.runs_synced > 0) {
+          showToast(`✨ Sincronização automática: ${data.runs_synced} atividades do Strava atualizadas.`);
+          fetchData();
+        }
+      }
+    } catch {
+      // Silently ignore background sync network errors
+    }
+  }, [fetchData]);
+
+  // Process Strava OAuth code
+  const processOAuthCode = useCallback(async (code: string) => {
+    if (isProcessingOAuth.current) return;
+    isProcessingOAuth.current = true;
+    setIsLoading(true);
+    showToast("Conectando ao Strava e vinculando suas atividades...");
+    try {
+      const savedLimit = typeof window !== "undefined" ? localStorage.getItem("librun_sync_limit") : null;
+      const savedClientId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_id") : null;
+      const savedClientSecret = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_secret") : null;
+      const syncCount = savedLimit !== null ? parseInt(savedLimit, 10) : 0;
+      
+      const exRes = await fetch("/api/strava/callback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: code,
+          client_id: savedClientId || undefined,
+          client_secret: savedClientSecret || undefined,
+          sync_count: syncCount,
+        }),
+      });
+      const exData = await exRes.json();
+      if (exRes.ok) {
+        if (typeof window !== "undefined") {
+          if (exData.access_token) {
+            localStorage.setItem("librun_strava_access_token", exData.access_token);
+          }
+          if (exData.refresh_token) {
+            localStorage.setItem("librun_strava_refresh_token", exData.refresh_token);
+          }
+          if (exData.expires_at) {
+            localStorage.setItem("librun_strava_token_expires_at", String(exData.expires_at));
+          }
+          if (exData.athlete_id) {
+            localStorage.setItem("librun_strava_athlete_id", String(exData.athlete_id));
+          }
+          if (exData.athlete_name) {
+            localStorage.setItem("librun_strava_athlete_name", exData.athlete_name);
+          }
+          localStorage.setItem("librun_last_sync_timestamp", String(Date.now()));
+        }
+
+        setIsConnectModalOpen(false);
+
+        if (exData.sync_error) {
+          showToast(`Strava conectado, mas houve erro ao importar atividades: ${exData.sync_error}`);
+        } else {
+          const countMsg = exData.sync?.runs_synced 
+            ? `${exData.sync.runs_synced} atividades importadas com sucesso!` 
+            : "Suas atividades foram importadas.";
+          showToast(`Conta do Strava conectada com sucesso! ${countMsg}`);
+        }
+      } else {
+        showToast(`Erro na autorização do Strava: ${exData.detail || "Verifique as credenciais no painel do Strava"}`);
+      }
+    } catch (e) {
+      console.error("Erro no callback Strava:", e);
+      showToast("Falha ao comunicar com o servidor. Verifique se o backend está online.");
+    } finally {
+      await fetchData();
+      setIsLoading(false);
+      isProcessingOAuth.current = false;
+    }
+  }, [fetchData]);
+
+  // Handle Strava OAuth callback, popup messaging, and auto-sync
   useEffect(() => {
+    // 1. If running inside a popup window, send code/error to opener and close itself
+    if (typeof window !== "undefined" && window.opener) {
+      const params = new URLSearchParams(window.location.search);
+      const popupCode = params.get("code");
+      const popupError = params.get("error");
+      if (popupCode || popupError) {
+        try {
+          window.opener.postMessage({
+            type: "LIBRUN_STRAVA_AUTH_RESULT",
+            code: popupCode,
+            error: popupError,
+          }, window.location.origin);
+        } catch (e) {
+          console.error("Erro ao enviar postMessage para opener:", e);
+        }
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch {
+            // ignore
+          }
+        }, 300);
+        return;
+      }
+    }
+
+    // 2. Listen for messages from popup window
+    const handleAuthMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "LIBRUN_STRAVA_AUTH_RESULT") return;
+
+      const { code, error } = event.data;
+      if (error) {
+        showToast(`Autorização cancelada ou recusada pelo Strava: ${error}`);
+      } else if (code) {
+        processOAuthCode(code);
+      }
+    };
+    window.addEventListener("message", handleAuthMessage);
+
+    // 3. Fallback: check query params on mount (if opened via normal redirect)
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const error = params.get("error");
@@ -130,74 +297,22 @@ export default function Home() {
       window.history.replaceState({}, document.title, window.location.pathname);
       showToast(`Autorização cancelada ou recusada pelo Strava: ${error}`);
       fetchData();
-      return;
+    } else if (code) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      processOAuthCode(code);
+    } else {
+      fetchData().then(() => {
+        if (!hasAutoSynced.current) {
+          hasAutoSynced.current = true;
+          triggerAutoSync();
+        }
+      });
     }
 
-    if (code) {
-      // Clean query params from URL
-      window.history.replaceState({}, document.title, window.location.pathname);
-      
-      const handleCallback = async () => {
-        setIsLoading(true);
-        showToast("Conectando ao Strava e sincronizando suas atividades...");
-        try {
-          const savedLimit = typeof window !== "undefined" ? localStorage.getItem("librun_sync_limit") : null;
-          const savedClientId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_id") : null;
-          const savedClientSecret = typeof window !== "undefined" ? localStorage.getItem("librun_strava_client_secret") : null;
-          const syncCount = savedLimit !== null ? parseInt(savedLimit, 10) : 0;
-          const exRes = await fetch("/api/strava/callback", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              code: code,
-              client_id: savedClientId || undefined,
-              client_secret: savedClientSecret || undefined,
-              sync_count: syncCount,
-            }),
-          });
-          const exData = await exRes.json();
-          if (exRes.ok) {
-            if (typeof window !== "undefined") {
-              if (exData.access_token) {
-                localStorage.setItem("librun_strava_access_token", exData.access_token);
-              }
-              if (exData.refresh_token) {
-                localStorage.setItem("librun_strava_refresh_token", exData.refresh_token);
-              }
-              if (exData.expires_at) {
-                localStorage.setItem("librun_strava_token_expires_at", String(exData.expires_at));
-              }
-              if (exData.athlete_id) {
-                localStorage.setItem("librun_strava_athlete_id", String(exData.athlete_id));
-              }
-              if (exData.athlete_name) {
-                localStorage.setItem("librun_strava_athlete_name", exData.athlete_name);
-              }
-            }
-            if (exData.sync_error) {
-              showToast(`Strava conectado, mas houve erro ao importar atividades: ${exData.sync_error}`);
-            } else {
-              const countMsg = exData.sync?.runs_synced 
-                ? `${exData.sync.runs_synced} atividades importadas com sucesso!` 
-                : "Suas atividades foram importadas.";
-              showToast(`Conta do Strava conectada com sucesso! ${countMsg}`);
-            }
-          } else {
-            showToast(`Erro na autorização do Strava: ${exData.detail || "Verifique as credenciais no painel do Strava"}`);
-          }
-        } catch (e) {
-          console.error("Erro no callback Strava:", e);
-          showToast("Falha ao comunicar com o servidor. Verifique se o backend está online.");
-        } finally {
-          await fetchData();
-          setIsLoading(false);
-        }
-      };
-      handleCallback();
-    } else {
-      fetchData();
-    }
-  }, [fetchData]);
+    return () => {
+      window.removeEventListener("message", handleAuthMessage);
+    };
+  }, [fetchData, processOAuthCode, triggerAutoSync]);
 
   // Load sample dataset
   const handleLoadSample = async () => {

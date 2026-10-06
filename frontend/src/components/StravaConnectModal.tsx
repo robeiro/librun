@@ -53,8 +53,51 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
     return 0; // 0 = Todas as corridas por padrão
   });
 
+  const [popupWindow, setPopupWindow] = useState<Window | null>(null);
+
   const isConnected = typeof window !== "undefined" && Boolean(localStorage.getItem("librun_strava_access_token"));
   const athleteName = (typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_name") : null) || athlete?.athlete_name;
+
+  const handleClose = React.useCallback(() => {
+    if (popupWindow && !popupWindow.closed) {
+      try {
+        popupWindow.close();
+      } catch {
+        // Ignore cross-origin close errors
+      }
+    }
+    setPopupWindow(null);
+    setIsSyncing(false);
+    onClose();
+  }, [popupWindow, onClose]);
+
+  // Close on Escape key press
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        handleClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, handleClose]);
+
+  // Check if popup closed by user
+  React.useEffect(() => {
+    if (!popupWindow) return;
+    const interval = setInterval(() => {
+      if (popupWindow.closed) {
+        setPopupWindow(null);
+        setIsSyncing(false);
+        setUploadStatus((prev) =>
+          prev && prev.includes("Janela do Strava aberta")
+            ? "Janela de autorização fechada pelo usuário."
+            : prev
+        );
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [popupWindow]);
 
   const handleDisconnect = () => {
     if (typeof window !== "undefined") {
@@ -101,7 +144,7 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
     }
   };
 
-  // Handle OAuth Strava Redirect
+  // Handle OAuth Strava Redirect / Popup
   const handleStartOAuth = async () => {
     if (!clientId.trim()) {
       setErrorMsg("Por favor, preencha o Client ID do seu app Strava.");
@@ -141,13 +184,48 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
         );
       }
 
-      // Redirecionar usuário para o Strava
-      window.location.href = data.url;
+      // Tenta abrir em popup centralizado para não sair da tela do app
+      const width = 600;
+      const height = 750;
+      const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+      const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+      
+      let popup: Window | null = null;
+      try {
+        popup = window.open(
+          data.url,
+          "librun_strava_auth_window",
+          `width=${width},height=${height},top=${top},left=${left},status=no,toolbar=no,menubar=no`
+        );
+      } catch {
+        popup = null;
+      }
+
+      if (!popup || popup.closed || typeof popup.closed === "undefined") {
+        // Bloqueador de popup ativo ou ambiente sem popups: redireciona normalmente
+        window.location.href = data.url;
+      } else {
+        setPopupWindow(popup);
+        setUploadStatus("Janela do Strava aberta. Faça login e autorize a conexão nela.");
+      }
     } catch (err: unknown) {
       setErrorMsg((err as Error).message || "Erro ao iniciar autenticação Strava.");
       setUploadStatus(null);
       setIsSyncing(false);
     }
+  };
+
+  const handleCancelOAuth = () => {
+    if (popupWindow && !popupWindow.closed) {
+      try {
+        popupWindow.close();
+      } catch {
+        // Ignore
+      }
+    }
+    setPopupWindow(null);
+    setIsSyncing(false);
+    setUploadStatus("Autorização cancelada.");
   };
 
   // Sync recent runs from Strava
@@ -206,11 +284,20 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl relative my-8">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+    >
+      <div 
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl relative my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={handleClose}
+          aria-label="Fechar janela"
           className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
         >
           <X className="w-5 h-5" />
@@ -414,6 +501,27 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
               </div>
             </div>
 
+            {popupWindow && isSyncing && (
+              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-800 dark:text-amber-300 space-y-2">
+                <div className="flex items-center space-x-2 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block animate-ping" />
+                  <span>Janela de autorização do Strava aberta</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-tight">
+                  Conclua o login e autorização na janela suspensa. Esta tela será atualizada automaticamente assim que você autorizar.
+                </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={handleCancelOAuth}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-rose-600 dark:text-rose-400 bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/50 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition"
+                  >
+                    Cancelar autorização
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
               <button
                 onClick={handleStartOAuth}
@@ -483,6 +591,26 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
             <span>{errorMsg}</span>
           </div>
         )}
+
+        {/* Footer actions */}
+        <div className="mt-6 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={handleClose}
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+          >
+            Fechar
+          </button>
+          {isSyncing && (
+            <button
+              type="button"
+              onClick={handleCancelOAuth}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 transition"
+            >
+              Cancelar Operação
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

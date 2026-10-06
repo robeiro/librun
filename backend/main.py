@@ -19,7 +19,8 @@ from sample_data import seed_sample_activities
 from strava_auth import (
     get_strava_auth_url,
     exchange_strava_code,
-    sync_strava_activities
+    sync_strava_activities,
+    get_valid_access_token
 )
 from gemini_service import (
     get_gemini_key,
@@ -226,21 +227,24 @@ class StravaExchangeRequest(BaseModel):
 
 @app.post("/api/strava/callback")
 async def exchange_token(payload: StravaExchangeRequest):
+    cid = payload.client_id or os.environ.get("STRAVA_CLIENT_ID")
+    csecret = payload.client_secret or os.environ.get("STRAVA_CLIENT_SECRET")
     try:
         res = await exchange_strava_code(
-            client_id=payload.client_id,
-            client_secret=payload.client_secret,
+            client_id=cid,
+            client_secret=csecret,
             code=payload.code
         )
         # Clear sample activities so athlete only sees their real runs
         clear_sample_activities()
 
-        # Automatically trigger sync with requested count (0 = todas)
+        # Perform fast initial sync (up to 30 activities so callback returns quickly without timeout)
+        initial_sync_count = 30 if (payload.sync_count is None or payload.sync_count == 0 or payload.sync_count > 30) else payload.sync_count
         try:
             sync_res = await sync_strava_activities(
-                count=payload.sync_count if payload.sync_count is not None else 0,
-                client_id=payload.client_id,
-                client_secret=payload.client_secret,
+                count=initial_sync_count,
+                client_id=cid,
+                client_secret=csecret,
                 access_token=res.get("access_token"),
                 refresh_token=res.get("refresh_token"),
                 token_expires_at=res.get("expires_at"),
@@ -253,6 +257,28 @@ async def exchange_token(payload: StravaExchangeRequest):
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erro na autorização do Strava: {str(e)}")
+
+class StravaRefreshRequest(BaseModel):
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    refresh_token: str
+
+@app.post("/api/strava/refresh")
+async def refresh_strava_token_endpoint(payload: StravaRefreshRequest):
+    cid = payload.client_id or os.environ.get("STRAVA_CLIENT_ID")
+    csecret = payload.client_secret or os.environ.get("STRAVA_CLIENT_SECRET")
+    if not cid or not csecret:
+        raise HTTPException(status_code=400, detail="Client ID e Client Secret são necessários para renovar o token.")
+    
+    token, new_tokens = await get_valid_access_token(
+        client_id=cid,
+        client_secret=csecret,
+        refresh_token=payload.refresh_token,
+        token_expires_at=0
+    )
+    if not token or not new_tokens:
+        raise HTTPException(status_code=400, detail="Falha ao renovar token com o Strava.")
+    return {"success": True, "new_tokens": new_tokens}
 
 class StravaSyncRequest(BaseModel):
     count: Optional[int] = 0

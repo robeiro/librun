@@ -1,8 +1,9 @@
+import os
 import time
 import urllib.parse
 from typing import Dict, Any, List, Optional
 import httpx
-from database import get_athlete_settings, save_athlete_settings, upsert_activity
+from database import get_athlete_settings, save_athlete_settings, upsert_activity, upsert_activities_bulk
 
 STRAVA_AUTH_BASE = "https://www.strava.com/oauth/authorize"
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
@@ -39,9 +40,10 @@ async def exchange_strava_code(client_id: Optional[str], client_secret: Optional
     athlete_name = f"{athlete_data.get('firstname', '')} {athlete_data.get('lastname', '')}".strip() or "Corredor Strava"
     athlete_id = str(athlete_data.get("id", ""))
 
-    # Update only athlete_name in settings without saving sensitive tokens
+    # Update athlete_name and athlete_id in settings
     save_athlete_settings({
         "athlete_name": athlete_name,
+        "athlete_id": athlete_id,
     })
 
     return {
@@ -68,10 +70,12 @@ async def get_valid_access_token(
         return access_token, None
 
     # 2. Attempt refresh if refresh_token and client credentials are provided
-    if refresh_token and client_id and client_secret:
+    cid = client_id or os.environ.get("STRAVA_CLIENT_ID")
+    csecret = client_secret or os.environ.get("STRAVA_CLIENT_SECRET")
+    if refresh_token and cid and csecret:
         payload = {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": cid,
+            "client_secret": csecret,
             "grant_type": "refresh_token",
             "refresh_token": refresh_token
         }
@@ -152,11 +156,12 @@ async def sync_strava_activities(
                 # Reached the end of athlete's history
                 break
 
+            batch = []
             for act in activities:
                 act_type = act.get("sport_type") or act.get("type") or "Run"
                 is_run = "run" in act_type.lower() or act_type in ["Run", "TrailRun", "VirtualRun"]
 
-                upsert_activity({
+                batch.append({
                     "strava_id": str(act.get("id")),
                     "name": act.get("name", "Corrida Strava"),
                     "type": act_type,
@@ -174,12 +179,15 @@ async def sync_strava_activities(
                     "suffer_score": act.get("suffer_score"),
                     "source": "strava_api",
                     "raw_data": act
-                }, athlete_id=athlete_id)
+                })
                 synced_count += 1
                 if is_run:
                     runs_count += 1
                     if not target_all and runs_count >= target_count:
                         break
+
+            if batch:
+                upsert_activities_bulk(batch, athlete_id=athlete_id)
 
             # If Strava returned fewer items than requested, we reached the very last page!
             if len(activities) < page_size:

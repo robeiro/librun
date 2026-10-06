@@ -169,7 +169,7 @@ def get_athlete_settings(athlete_id: Optional[str] = None) -> Dict[str, Any]:
         res["strava_refresh_token"] = None
         res["strava_token_expires_at"] = None
         res["gemini_api_key"] = None
-        res["athlete_id"] = athlete_id if athlete_id else None
+        res["athlete_id"] = athlete_id if athlete_id else res.get("athlete_id")
         if not res.get("gemini_model") or res.get("gemini_model") == "gemini-flash-lite-latest":
             res["gemini_model"] = "gemini-1.5-flash"
         return res
@@ -213,6 +213,84 @@ def get_latest_ai_analysis(analysis_type: str, target_id: Optional[str] = None) 
     if row:
         return dict(row)
     return None
+
+def upsert_activities_bulk(activities_list: List[Dict[str, Any]], athlete_id: Optional[str] = None) -> int:
+    """Inserts or updates multiple activities in a single transaction for maximum performance."""
+    if not activities_list:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    count = 0
+    for act in activities_list:
+        strava_id = str(act.get("strava_id") or act.get("id") or "")
+        if not strava_id:
+            strava_id = f"local_{act.get('start_date', '')}_{act.get('distance', 0)}"
+
+        name = act.get("name") or "Corrida"
+        act_type = act.get("type") or "Run"
+        distance = float(act.get("distance", 0.0))
+        moving_time = int(act.get("moving_time", 0))
+        elapsed_time = int(act.get("elapsed_time", moving_time))
+        total_elevation_gain = float(act.get("total_elevation_gain", 0.0) or 0.0)
+        start_date = str(act.get("start_date") or "")
+        start_date_local = str(act.get("start_date_local") or start_date)
+        average_speed = float(act.get("average_speed", 0.0) or 0.0)
+        max_speed = float(act.get("max_speed", 0.0) or 0.0)
+        average_cadence = float(act["average_cadence"]) if act.get("average_cadence") is not None else None
+        average_heartrate = float(act["average_heartrate"]) if act.get("average_heartrate") is not None else None
+        max_heartrate = float(act["max_heartrate"]) if act.get("max_heartrate") is not None else None
+        suffer_score = float(act["suffer_score"]) if act.get("suffer_score") is not None else None
+        source = act.get("source", "strava_api")
+        raw_data = json.dumps(act.get("raw_data") or {}) if isinstance(act.get("raw_data"), dict) else None
+
+        act_athlete_id = None
+        if athlete_id:
+            act_athlete_id = str(athlete_id)
+        elif act.get("athlete_id"):
+            act_athlete_id = str(act.get("athlete_id"))
+        elif isinstance(act.get("athlete"), dict) and act.get("athlete", {}).get("id"):
+            act_athlete_id = str(act["athlete"]["id"])
+        elif source == "sample":
+            act_athlete_id = "sample"
+
+        if average_cadence is not None and 60 <= average_cadence <= 110:
+            average_cadence = average_cadence * 2
+
+        cursor.execute("""
+        INSERT INTO activities (
+            strava_id, athlete_id, name, type, distance, moving_time, elapsed_time,
+            total_elevation_gain, start_date, start_date_local, average_speed, max_speed,
+            average_cadence, average_heartrate, max_heartrate, suffer_score, source, raw_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(strava_id) DO UPDATE SET
+            athlete_id = COALESCE(excluded.athlete_id, activities.athlete_id),
+            name = excluded.name,
+            type = excluded.type,
+            distance = excluded.distance,
+            moving_time = excluded.moving_time,
+            elapsed_time = excluded.elapsed_time,
+            total_elevation_gain = excluded.total_elevation_gain,
+            start_date = excluded.start_date,
+            start_date_local = excluded.start_date_local,
+            average_speed = excluded.average_speed,
+            max_speed = excluded.max_speed,
+            average_cadence = excluded.average_cadence,
+            average_heartrate = excluded.average_heartrate,
+            max_heartrate = excluded.max_heartrate,
+            suffer_score = excluded.suffer_score,
+            source = excluded.source,
+            raw_data = excluded.raw_data
+        """, (
+            strava_id, act_athlete_id, name, act_type, distance, moving_time, elapsed_time,
+            total_elevation_gain, start_date, start_date_local, average_speed, max_speed,
+            average_cadence, average_heartrate, max_heartrate, suffer_score, source, raw_data
+        ))
+        count += 1
+
+    conn.commit()
+    conn.close()
+    return count
 
 def upsert_activity(act: Dict[str, Any], athlete_id: Optional[str] = None) -> bool:
     """Inserts or updates an activity. Returns True if inserted, False if updated."""
@@ -301,8 +379,13 @@ def get_activities(limit: Optional[int] = None, act_type: Optional[str] = None, 
         where_parts.append("(athlete_id = ? OR (athlete_id IS NULL AND source != 'sample'))")
         params.append(str(athlete_id))
     else:
-        # Unauthenticated / anonymous visitor: show sample activities only
-        where_parts.append("(source = 'sample' OR athlete_id = 'sample')")
+        # Check if there are real activities in the database
+        cursor.execute("SELECT COUNT(*) FROM activities WHERE source != 'sample'")
+        real_count = cursor.fetchone()[0]
+        if real_count > 0:
+            where_parts.append("source != 'sample'")
+        else:
+            where_parts.append("(source = 'sample' OR athlete_id = 'sample')")
 
     if act_type:
         where_parts.append("type LIKE ?")
@@ -315,18 +398,20 @@ def get_activities(limit: Optional[int] = None, act_type: Optional[str] = None, 
     cursor.execute(query, params)
     rows = cursor.fetchall()
 
-    # Fallback to sample data if athlete has no synced activities yet
+    # Fallback to sample data only if athlete has no synced activities yet and real activities don't exist
     if not rows and athlete_id and athlete_id != "sample":
-        fallback_query = "SELECT * FROM activities WHERE source = 'sample'"
-        fallback_params = []
-        if act_type:
-            fallback_query += " AND type LIKE ?"
-            fallback_params.append(f"%{act_type}%")
-        fallback_query += " ORDER BY start_date DESC"
-        if limit and limit > 0:
-            fallback_query += f" LIMIT {int(limit)}"
-        cursor.execute(fallback_query, fallback_params)
-        rows = cursor.fetchall()
+        cursor.execute("SELECT COUNT(*) FROM activities WHERE source != 'sample'")
+        if cursor.fetchone()[0] == 0:
+            fallback_query = "SELECT * FROM activities WHERE source = 'sample'"
+            fallback_params = []
+            if act_type:
+                fallback_query += " AND type LIKE ?"
+                fallback_params.append(f"%{act_type}%")
+            fallback_query += " ORDER BY start_date DESC"
+            if limit and limit > 0:
+                fallback_query += f" LIMIT {int(limit)}"
+            cursor.execute(fallback_query, fallback_params)
+            rows = cursor.fetchall()
 
     conn.close()
     
