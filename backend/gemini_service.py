@@ -243,9 +243,13 @@ async def generate_global_coaching_analysis(
     force_refresh: bool = False,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    athlete_id: Optional[str] = None
+    athlete_id: Optional[str] = None,
+    goal: Optional[str] = None,
+    custom_prompt: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Generates an in-depth AI coaching diagnosis of the athlete's overall fitness, 80/20 balance, ACWR, and next 14 days action plan."""
+    """Generates an in-depth AI coaching diagnosis tailored to the athlete's specific goal and custom questions/instructions."""
+    import hashlib
+
     key = get_gemini_key(api_key)
     if not key:
         return {
@@ -253,8 +257,29 @@ async def generate_global_coaching_analysis(
             "error": "Chave da API Gemini não configurada. Acesse Configurações para adicionar sua chave."
         }
 
-    cache_target = f"athlete_{athlete_id}" if athlete_id else "global_coach"
-    if not force_refresh:
+    athlete_name = settings.get("athlete_name", "Corredor")
+    max_hr = settings.get("max_hr", 190)
+    rest_hr = settings.get("rest_hr", 55)
+    target_dist = settings.get("target_distance", "10k")
+    target_time = settings.get("target_time_minutes", 50.0)
+
+    # Determine effective goal
+    effective_goal = (goal or "").strip()
+    if not effective_goal:
+        effective_goal = f"{target_dist} em {target_time} minutos"
+
+    cleaned_custom = (custom_prompt or "").strip()
+
+    # Build unique cache key based on athlete, goal, and custom user questions
+    cache_suffix = ""
+    if effective_goal or cleaned_custom:
+        key_hash = hashlib.md5(f"{effective_goal}_{cleaned_custom}".encode("utf-8")).hexdigest()[:8]
+        cache_suffix = f"_{key_hash}"
+
+    cache_target = f"athlete_{athlete_id}{cache_suffix}" if athlete_id else f"global_coach{cache_suffix}"
+
+    # If athlete provided a custom question/prompt, always default to fresh generation unless explicitly cached
+    if not force_refresh and not cleaned_custom:
         cached = get_latest_ai_analysis("coach_global", target_id=cache_target)
         if cached:
             return {
@@ -262,7 +287,9 @@ async def generate_global_coaching_analysis(
                 "analysis": cached["content"],
                 "created_at": cached["created_at"],
                 "cached": True,
-                "model_used": cached.get("model_used") or model or get_gemini_model()
+                "model_used": cached.get("model_used") or model or get_gemini_model(),
+                "goal": effective_goal,
+                "custom_prompt": cleaned_custom
             }
 
     # Extract summary metrics
@@ -270,12 +297,6 @@ async def generate_global_coaching_analysis(
     acwr = analytics.get("acwr", {})
     hr_dist = analytics.get("hr_distribution", {})
     race_preds = analytics.get("race_predictions", {}).get("predictions", {})
-
-    athlete_name = settings.get("athlete_name", "Corredor")
-    max_hr = settings.get("max_hr", 190)
-    rest_hr = settings.get("rest_hr", 55)
-    target_dist = settings.get("target_distance", "10k")
-    target_time = settings.get("target_time_minutes", 50.0)
 
     total_runs = summary.get("total_runs", len(activities))
     total_km = summary.get("total_distance_km", 0)
@@ -299,14 +320,29 @@ async def generate_global_coaching_analysis(
 
     recent_runs_summary = "\n".join(recent_runs_text) if recent_runs_text else "Sem histórico recente detalhado."
 
+    # Build prompt with goal and custom user instructions
+    custom_section = ""
+    if cleaned_custom:
+        custom_section = f"""
+=== MENSAGEM / DÚVIDAS / OBSERVAÇÕES ESPECÍFICAS DO ATLETA ===
+O atleta escreveu pessoalmente as seguintes instruções, dores, dúvidas ou disponibilidade para você responder:
+\"\"\"{cleaned_custom}\"\"\"
+
+⚠️ ATENÇÃO OBRIGATÓRIA: Você DEVE dedicar uma seção de destaque respondendo ponto a ponto e de forma aprofundada a estas dúvidas e pedidos específicos do atleta!
+"""
+
     prompt = f"""Você é um treinador de corrida de elite mundial e fisiologista do exercício (nível olímpico e especialista na metodologia 80/20 do Dr. Stephen Seiler e no índice de controle de carga ACWR do Dr. Tim Gabbett).
 
 Você está analisando os dados reais e o histórico do atleta {athlete_name}.
 
+=== OBJETIVO PRINCIPAL SELECIONADO PELO ATLETA ===
+🎯 Meta/Foco Declarado: {effective_goal}
+(Toda a sua análise diagnóstica, alertas fisiológicos e periodização tática devem ser calibrados especificamente para guiar o atleta até este objetivo com a máxima performance e prevenção de lesões).
+{custom_section}
 === DADOS DO ATLETA ===
 - Nome: {athlete_name}
 - FC Máxima: {max_hr} bpm | FC Repouso: {rest_hr} bpm
-- Distância Foco / Meta: {target_dist} em {target_time} minutos
+- Distância Foco no Perfil: {target_dist} em {target_time} minutos
 - Total de Corridas Registradas: {total_runs}
 - Volume Total Acumulado: {total_km} km
 - Ritmo Médio Geral: {avg_pace}
@@ -340,24 +376,27 @@ Você está analisando os dados reais e o histórico do atleta {athlete_name}.
 === SUA TAREFA ===
 Elabore uma análise completa, altamente técnica, encorajadora e estruturada em Markdown de alto nível com os seguintes tópicos bem definidos:
 
-1. 🏅 **Diagnóstico Geral do Nível e Perfil do Atleta**:
-   Avalie a base aeróbica, consistência e viabilidade da meta ({target_dist} em {target_time} min).
+1. 🎯 **Diagnóstico Focado no Objetivo ({effective_goal})**:
+   Avalie a base aeróbica, consistência e a distância fisiológica real entre o nível atual do atleta e a meta estabelecida.
+{f'''
+2. 💬 **Resposta Direta às Perguntas & Observações do Atleta**:
+   Responda de forma atenciosa, prática e fundamentada na ciência do esporte aos pontos trazidos pelo atleta na mensagem personalizada.
+''' if cleaned_custom else ''}
+3. ⚡ **Pontos Fortes Confirmados nos Dados**:
+   O que o atleta já faz muito bem que serve de alicerce para essa meta.
 
-2. ⚡ **Pontos Fortes Confirmados nos Dados**:
-   O que o atleta já faz muito bem que deve continuar fazendo.
+4. ⚠️ **Gargalos Críticos & Ajustes Necessários**:
+   Analise a distribuição de zonas cardíacas (evitar a Zona Cinzenta Z3), a cadência de passada e o índice de risco ACWR.
 
-3. ⚠️ **Gargalos Críticos & Onde Está Perdendo Rendimento**:
-   Analise com precisão cirúrgica a distribuição de zonas cardíacas (se há excesso de Zona Cinzenta Z3), a cadência de passada (risco de overstriding) e o índice de fadiga ACWR.
-
-4. 📋 **Prescrição Tática para as Próximas 2 Semanas**:
-   Sugira uma estrutura semanal equilibrada com tipos de treino exatos:
+5. 📋 **Prescrição Tática para as Próximas 2 Semanas**:
+   Sugira uma estrutura semanal equilibrada e adaptada à meta ({effective_goal}):
    - Treino Regenerativo (duração, zona de FC e pace alvo)
-   - Treino de Rodagem Z2 (o pilar da densidade mitocondrial)
-   - Treino Específico / Intervalado (tiros ou limiar com ritmos recomendados)
-   - Longão do final de semana
+   - Treino de Rodagem Z2 (volume e foco respiratório)
+   - Treino Específico / Intervalado (ritmos e distâncias exatas calibradas para a meta)
+   - Longão do final de semana (progressão segura)
 
-5. 💡 **A 'Dica de Ouro' do Treinador**:
-   Uma única instrução prática e memorável que trará o maior salto de rendimento sem se machucar.
+6. 💡 **A 'Dica de Ouro' do Treinador**:
+   Uma única instrução prática e memorável para gerar o maior salto de rendimento sem risco de lesão.
 
 Escreva em português brasileiro de forma direta, motivadora, usando termos técnicos do atletismo de forma clara e visualmente agradável com emojis pontuais e formatação rica em Markdown.
 """
@@ -371,7 +410,9 @@ Escreva em português brasileiro de forma direta, motivadora, usando termos téc
             "analysis": analysis_text,
             "cached": False,
             "created_at": "Agora",
-            "model_used": current_model
+            "model_used": current_model,
+            "goal": effective_goal,
+            "custom_prompt": cleaned_custom
         }
     except Exception as e:
         logger.error(f"Erro ao gerar diagnóstico do coach: {e}")

@@ -89,6 +89,11 @@ class AthleteSettingsUpdate(BaseModel):
     gemini_api_key: Optional[str] = None
     gemini_model: Optional[str] = None
 
+class CoachAnalysisRequest(BaseModel):
+    goal: Optional[str] = None
+    custom_prompt: Optional[str] = None
+    force_refresh: bool = False
+
 @app.get("/api/settings")
 def get_settings(
     x_athlete_id: Optional[str] = Header(default=None, alias="X-Athlete-Id")
@@ -401,14 +406,14 @@ async def validate_gemini_key_endpoint(
     result = await validate_gemini_key(key, chosen_model=model)
     return result
 
-@app.get("/api/ai/coach")
-async def get_ai_coaching_analysis(
-    force_refresh: bool = Query(default=False),
-    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key"),
-    x_gemini_model: Optional[str] = Header(default=None, alias="X-Gemini-Model"),
-    x_athlete_id: Optional[str] = Header(default=None, alias="X-Athlete-Id")
+async def run_coaching_analysis(
+    goal: Optional[str] = None,
+    custom_prompt: Optional[str] = None,
+    force_refresh: bool = False,
+    x_gemini_key: Optional[str] = None,
+    x_gemini_model: Optional[str] = None,
+    x_athlete_id: Optional[str] = None
 ):
-    """Returns AI Coach Diagnosis (cached or freshly generated)."""
     key = get_gemini_key(x_gemini_key)
     if not key:
         raise HTTPException(
@@ -433,48 +438,67 @@ async def get_ai_coaching_analysis(
         force_refresh=force_refresh,
         api_key=key,
         model=x_gemini_model,
-        athlete_id=x_athlete_id
+        athlete_id=x_athlete_id,
+        goal=goal,
+        custom_prompt=custom_prompt
     )
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Erro ao gerar diagnóstico IA."))
     return res
 
-@app.post("/api/ai/coach/refresh")
-async def refresh_ai_coaching_analysis(
+@app.get("/api/ai/coach")
+async def get_ai_coaching_analysis(
+    force_refresh: bool = Query(default=False),
+    goal: Optional[str] = Query(default=None),
     x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key"),
     x_gemini_model: Optional[str] = Header(default=None, alias="X-Gemini-Model"),
     x_athlete_id: Optional[str] = Header(default=None, alias="X-Athlete-Id")
 ):
-    """Forces generation of a brand new AI Coach Diagnosis."""
-    key = get_gemini_key(x_gemini_key)
-    if not key:
-        raise HTTPException(
-            status_code=400,
-            detail="Chave da API Gemini não configurada neste dispositivo. Acesse Configurações ⚙️ para adicionar sua chave."
-        )
-
-    activities = get_activities(limit=None, act_type=None, athlete_id=x_athlete_id)
-    if not activities:
-        raise HTTPException(
-            status_code=400, 
-            detail="Nenhuma atividade cadastrada. Sincronize com o Strava ou carregue a base de exemplo."
-        )
-
-    settings = get_athlete_settings(athlete_id=x_athlete_id)
-    analytics_result = compute_full_analytics(activities, settings)
-
-    res = await generate_global_coaching_analysis(
-        activities=activities,
-        settings=settings,
-        analytics=analytics_result,
-        force_refresh=True,
-        api_key=key,
-        model=x_gemini_model,
-        athlete_id=x_athlete_id
+    """Returns AI Coach Diagnosis (cached or freshly generated)."""
+    return await run_coaching_analysis(
+        goal=goal,
+        custom_prompt=None,
+        force_refresh=force_refresh,
+        x_gemini_key=x_gemini_key,
+        x_gemini_model=x_gemini_model,
+        x_athlete_id=x_athlete_id
     )
-    if not res.get("success"):
-        raise HTTPException(status_code=400, detail=res.get("error", "Erro ao gerar diagnóstico IA."))
-    return res
+
+@app.post("/api/ai/coach")
+async def post_ai_coaching_analysis(
+    req: Optional[CoachAnalysisRequest] = None,
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key"),
+    x_gemini_model: Optional[str] = Header(default=None, alias="X-Gemini-Model"),
+    x_athlete_id: Optional[str] = Header(default=None, alias="X-Athlete-Id")
+):
+    """Generates AI Coach Diagnosis tailored to goal and optional custom prompt."""
+    req_data = req or CoachAnalysisRequest()
+    return await run_coaching_analysis(
+        goal=req_data.goal,
+        custom_prompt=req_data.custom_prompt,
+        force_refresh=req_data.force_refresh,
+        x_gemini_key=x_gemini_key,
+        x_gemini_model=x_gemini_model,
+        x_athlete_id=x_athlete_id
+    )
+
+@app.post("/api/ai/coach/refresh")
+async def refresh_ai_coaching_analysis(
+    req: Optional[CoachAnalysisRequest] = None,
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key"),
+    x_gemini_model: Optional[str] = Header(default=None, alias="X-Gemini-Model"),
+    x_athlete_id: Optional[str] = Header(default=None, alias="X-Athlete-Id")
+):
+    """Forces generation of a brand new AI Coach Diagnosis with specified goal/prompt."""
+    req_data = req or CoachAnalysisRequest()
+    return await run_coaching_analysis(
+        goal=req_data.goal,
+        custom_prompt=req_data.custom_prompt,
+        force_refresh=True,
+        x_gemini_key=x_gemini_key,
+        x_gemini_model=x_gemini_model,
+        x_athlete_id=x_athlete_id
+    )
 
 @app.get("/api/ai/activity/{strava_id}")
 async def get_single_activity_ai_analysis(
