@@ -13,8 +13,9 @@ from database import (
     clear_all_activities,
     clear_sample_activities,
 )
+import re
 from analytics import compute_full_analytics
-from importer import parse_strava_csv, parse_strava_zip, parse_gpx_file
+from importer import parse_strava_csv, parse_strava_zip, parse_gpx_file, parse_fit_file
 from sample_data import seed_sample_activities
 from strava_auth import (
     get_strava_auth_url,
@@ -137,30 +138,46 @@ def list_activities(
     return {"count": len(acts), "activities": acts}
 
 @app.post("/api/activities/upload")
-async def upload_activity_file(file: UploadFile = File(...)):
-    """Handles Strava export ZIP, CSV, or GPX files."""
-    filename = file.filename.lower()
-    content = await file.read()
+async def upload_activity_file(
+    file: UploadFile = File(...),
+    x_athlete_id: Optional[str] = Header(default=None, alias="X-Athlete-Id")
+):
+    """Handles Strava export ZIP, CSV, GPX, or FIT files."""
+    filename = (file.filename or "").lower()
+    
+    # Extract athlete_id from filename (e.g. export_9572506.zip) if not provided in header
+    eff_athlete_id = x_athlete_id
+    if not eff_athlete_id and "export_" in filename:
+        m = re.search(r"export_(\d+)", filename)
+        if m:
+            eff_athlete_id = m.group(1)
 
     try:
         if filename.endswith(".zip"):
-            imported, skipped = parse_strava_zip(content)
+            # Pass the underlying spooled file directly to avoid loading large files into RAM
+            imported, skipped = parse_strava_zip(
+                file.file, 
+                athlete_id=eff_athlete_id, 
+                filename=file.filename or ""
+            )
             return {
                 "success": True,
-                "message": f"Arquivo ZIP do Strava processado com sucesso! {imported} atividades importadas.",
+                "message": f"Arquivo ZIP processado com sucesso! {imported} atividades importadas ({skipped} ignoradas).",
                 "imported": imported,
                 "skipped": skipped
             }
         elif filename.endswith(".csv"):
-            imported, skipped = parse_strava_csv(content)
+            content = await file.read()
+            imported, skipped = parse_strava_csv(content, athlete_id=eff_athlete_id)
             return {
                 "success": True,
-                "message": f"Arquivo CSV processado com sucesso! {imported} atividades importadas.",
+                "message": f"Arquivo CSV processado com sucesso! {imported} atividades importadas ({skipped} ignoradas).",
                 "imported": imported,
                 "skipped": skipped
             }
         elif filename.endswith(".gpx"):
-            ok = parse_gpx_file(content, filename=file.filename)
+            content = await file.read()
+            ok = parse_gpx_file(content, filename=file.filename or "Corrida GPX", athlete_id=eff_athlete_id)
             if not ok:
                 raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo GPX.")
             return {
@@ -169,10 +186,21 @@ async def upload_activity_file(file: UploadFile = File(...)):
                 "imported": 1,
                 "skipped": 0
             }
+        elif filename.endswith(".fit") or filename.endswith(".fit.gz"):
+            content = await file.read()
+            ok = parse_fit_file(content, filename=file.filename or "Atividade FIT", athlete_id=eff_athlete_id)
+            if not ok:
+                raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo FIT.")
+            return {
+                "success": True,
+                "message": f"Atividade FIT '{file.filename}' importada com sucesso!",
+                "imported": 1,
+                "skipped": 0
+            }
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Formato não suportado. Por favor envie um arquivo .csv (export Strava), .zip ou .gpx."
+                detail="Formato não suportado. Por favor envie um arquivo .zip, .csv, .gpx ou .fit."
             )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erro ao processar arquivo: {str(e)}")

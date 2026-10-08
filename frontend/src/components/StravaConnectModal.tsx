@@ -113,7 +113,7 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle direct file upload (CSV / ZIP / GPX)
+  // Handle direct file upload (CSV / ZIP / GPX / FIT)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -125,17 +125,29 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
     const formData = new FormData();
     formData.append("file", file);
 
+    const headers: Record<string, string> = {};
+    const savedAthleteId = typeof window !== "undefined" ? localStorage.getItem("librun_strava_athlete_id") : null;
+    if (savedAthleteId) {
+      headers["X-Athlete-Id"] = savedAthleteId;
+    }
+
     try {
       const res = await fetch("/api/activities/upload", {
         method: "POST",
+        headers,
         body: formData,
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.detail || "Falha ao importar arquivo");
       }
-      setUploadStatus(data.message);
-      onRefreshData();
+      if (data.imported === 0) {
+        setErrorMsg(`Aviso: 0 atividades foram importadas (${data.skipped || 0} ignoradas). Verifique o conteúdo do arquivo.`);
+        setUploadStatus(null);
+      } else {
+        setUploadStatus(data.message);
+        onRefreshData();
+      }
     } catch (err: unknown) {
       setErrorMsg((err as Error).message || "Erro desconhecido ao carregar arquivo");
       setUploadStatus(null);
@@ -564,11 +576,11 @@ export const StravaConnectModal: React.FC<StravaConnectModalProps> = ({
                 Clique para selecionar seu activities.csv ou export.zip
               </span>
               <span className="text-[11px] text-slate-500 dark:text-slate-500 mt-1">
-                Suporta também arquivos GPX individuais
+                Suporta export.zip (arquivo do Strava), activities.csv, FIT ou GPX
               </span>
               <input
                 type="file"
-                accept=".csv,.zip,.gpx"
+                accept=".csv,.zip,.gpx,.fit,.fit.gz,.gpx.gz"
                 className="hidden"
                 onChange={handleFileUpload}
                 disabled={isSyncing}

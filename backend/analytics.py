@@ -74,7 +74,7 @@ def classify_sport(raw_type: Any) -> Dict[str, str]:
             "pace_unit": "min/km",
             "cadence_unit": "spm"
         }
-    if any(k in tl for k in ["weight", "strength", "força", "muscul", "workout", "crossfit", "gym", "yoga", "pilates", "fitness", "hiit"]):
+    if any(k in tl for k in ["weight", "strength", "força", "muscul", "workout", "crossfit", "gym", "yoga", "pilates", "fitness", "hiit", "peso", "treino"]):
         return {
             "sport_type": "Workout",
             "sport_category": "workout",
